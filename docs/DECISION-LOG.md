@@ -4,7 +4,7 @@ Every non-trivial decision made while developing Kinfold is recorded here, in
 order, with its rationale and consequences. Entries are never deleted; a
 reversed decision gets a new entry that references the old one. Architecture
 decisions that shape the system long-term are additionally summarised in
-`ENTSCHEIDUNGEN.md` (to be migrated to `docs/DECISIONS.md`, see D-002).
+`docs/DECISIONS.md`.
 
 Format: `D-<n>` — date — status (`active`, `superseded by D-<m>`).
 
@@ -69,7 +69,7 @@ Out of scope (tracked as `post-alpha` issues): direct peer-to-peer paths, UDP
 transport and NAT traversal, layer 2, subnet gateways, GUI, non-Linux clients,
 multi-controller/quorum, CA rotation automation.
 
-**Rationale:** The architecture decisions (ENTSCHEIDUNGEN.md §3) deliberately
+**Rationale:** The architecture decisions (docs/DECISIONS.md §3) deliberately
 chose a central relay first. Making that design trustworthy is the shortest
 path to something deployable; a transport rewrite would restart the review
 from zero.
@@ -130,7 +130,7 @@ documented in `CONTRIBUTING.md`.
 
 ## D-007 — 2026-11-08 — active — No external Go modules
 
-**Decision:** The rule from ENTSCHEIDUNGEN.md §2 stays: standard library
+**Decision:** The rule from docs/DECISIONS.md §2 stays: standard library
 only, no third-party modules, including for logging, CLI parsing and testing.
 
 **Rationale:** Smaller supply-chain surface for a security-sensitive tool;
