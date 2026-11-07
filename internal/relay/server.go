@@ -260,13 +260,14 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		reject(w, "peer pair not authorized", http.StatusForbidden)
 		return
 	}
-	if s.waiting[key] != nil {
+	// The authenticated device reconnects for this ordered pair, so any
+	// session it still holds for the pair is stale (crash, NAT timeout).
+	// Supersede it instead of rejecting the reconnect until TCP keepalive
+	// notices the dead connection (review R-06).
+	superseded := s.supersede(from, to)
+	if status := s.admissionStatus(from); status != 0 {
 		s.mu.Unlock()
-		reject(w, "relay busy", http.StatusConflict)
-		return
-	}
-	if status := s.admissionStatus(from, to); status != 0 {
-		s.mu.Unlock()
+		forceClose(superseded...)
 		if status == http.StatusTooManyRequests {
 			w.Header().Set("Retry-After", "2")
 		}
@@ -276,22 +277,26 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		s.mu.Unlock()
+		forceClose(superseded...)
 		reject(w, "hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 	conn, rw, err := hijacker.Hijack()
 	if err != nil {
 		s.mu.Unlock()
+		forceClose(superseded...)
 		slog.Warn("relay hijack failed", "error", err)
 		return
 	}
 	if rw.Reader.Buffered() != 0 {
 		s.mu.Unlock()
+		forceClose(superseded...)
 		conn.Close()
 		return
 	}
 	s.active[conn] = endpoint{from: from, to: to}
 	s.mu.Unlock()
+	forceClose(superseded...)
 	defer func() {
 		if err != nil {
 			conn.Close()
@@ -357,8 +362,27 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	}
 }
 
+// supersede removes every waiting or active endpoint of the ordered pair and
+// returns the connections to close after s.mu is released. Bridged partner
+// connections end when their bridge sees the closed side. Caller holds s.mu.
+func (s *Server) supersede(from, to string) []net.Conn {
+	key := from + "\x00" + to
+	if p := s.waiting[key]; p != nil {
+		delete(s.waiting, key)
+		close(p.cancel)
+	}
+	var stale []net.Conn
+	for conn, current := range s.active {
+		if current.from == from && current.to == to {
+			delete(s.active, conn)
+			stale = append(stale, conn)
+		}
+	}
+	return stale
+}
+
 // admissionStatus runs while holding s.mu. Counts include waiting and bridged endpoints.
-func (s *Server) admissionStatus(from, to string) int {
+func (s *Server) admissionStatus(from string) int {
 	if len(s.active) >= maxRelayEndpoints {
 		return http.StatusTooManyRequests
 	}
@@ -366,9 +390,6 @@ func (s *Server) admissionStatus(from, to string) int {
 	for _, current := range s.active {
 		if current.from == from {
 			count++
-			if current.to == to {
-				return http.StatusConflict
-			}
 		}
 	}
 	if count >= maxPeerEndpoints {
