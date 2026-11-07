@@ -17,9 +17,14 @@ import (
 )
 
 type link struct {
-	peer          core.Peer
+	peer core.Peer
+	// queue is the send queue of the running session; only that session
+	// reads it. outbox points to the same channel while a session is
+	// connected and is nil otherwise. Each session gets a fresh channel, so
+	// packets queued for an ended session are dropped with it instead of
+	// leaking into the next one (review A-06).
 	queue         chan []byte
-	connected     atomic.Bool
+	outbox        atomic.Pointer[chan []byte]
 	allowIncoming bool
 	allowOutgoing bool
 	servicesOn    bool
@@ -29,7 +34,10 @@ type link struct {
 	peerIPv6      netip.Addr
 }
 
-const tunnelMTU = 1280
+const (
+	tunnelMTU      = 1280
+	peerQueueDepth = 128
+)
 
 type tunnelWriteError struct{ err error }
 
@@ -79,7 +87,7 @@ func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID strin
 		}
 		ip, _ := netip.ParseAddr(p.IP)
 		peerIPv6, _ := netip.ParseAddr(p.IPv6)
-		l := &link{peer: p, queue: make(chan []byte, 128), allowIncoming: allowIncoming, allowOutgoing: allowOutgoing, localIPv6: localIPv6, peerIPv6: peerIPv6}
+		l := &link{peer: p, allowIncoming: allowIncoming, allowOutgoing: allowOutgoing, localIPv6: localIPv6, peerIPv6: peerIPv6}
 		if cfg.Policy != nil && cfg.Policy.Services != nil {
 			l.servicesOn = true
 			l.inServices = compileServices(cfg.Policy.Services.Allowed, p.ID, ownID)
@@ -134,12 +142,16 @@ func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID strin
 			continue
 		}
 		l := links[dst]
-		if l == nil || !l.allowOutgoing || !l.connected.Load() || (l.servicesOn && !servicePacket(packet, l.outServices)) {
+		if l == nil || !l.allowOutgoing || (l.servicesOn && !servicePacket(packet, l.outServices)) {
+			continue
+		}
+		outbox := l.outbox.Load()
+		if outbox == nil {
 			continue
 		}
 		clone := append([]byte(nil), packet...)
 		select {
-		case l.queue <- clone:
+		case *outbox <- clone:
 		default:
 			slog.Debug("peer queue full; packet dropped", "peer", l.peer.ID)
 		}
@@ -156,17 +168,16 @@ func (l *link) run(ctx context.Context, cred core.Credential, cfg core.Config, o
 			}
 		} else {
 			slog.Info("peer connected through relay", "peer", l.peer.ID)
-			l.connected.Store(true)
+			queue := make(chan []byte, peerQueueDepth)
+			l.queue = queue
+			l.outbox.Store(&queue)
 			started := time.Now()
 			err = l.session(ctx, conn, localIP, device, writeMu)
 			if time.Since(started) >= stableLink {
 				backoff.reset()
 			}
-			l.connected.Store(false)
+			l.outbox.Store(nil)
 			conn.Close()
-			for len(l.queue) > 0 {
-				<-l.queue
-			}
 			var writeErr *tunnelWriteError
 			if errors.As(err, &writeErr) {
 				return fmt.Errorf("peer %s: %w", l.peer.ID, writeErr)
