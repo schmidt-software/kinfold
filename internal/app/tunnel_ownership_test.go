@@ -50,7 +50,7 @@ func TestSuperviseClosesTunnelOnceAndReportsCloseError(t *testing.T) {
 				}
 				return runErr
 			}
-			err = supervise(context.Background(), cred, "kf0", state.Config, "alice", time.Hour, open, fetch, run)
+			err = supervise(context.Background(), cred, "kf0", state.Config, "alice", time.Hour, 0, open, fetch, run)
 			if !errors.Is(err, runErr) || !errors.Is(err, closeErr) {
 				t.Fatalf("runner or close failure lost: %v", err)
 			}
