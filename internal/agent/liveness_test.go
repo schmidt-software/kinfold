@@ -1,0 +1,67 @@
+package agent
+
+import (
+	"context"
+	"io"
+	"net"
+	"net/netip"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/schmidt-software/kinfold/internal/core"
+)
+
+func TestSessionEndsWhenPeerStopsReading(t *testing.T) {
+	old := peerWriteTimeout
+	peerWriteTimeout = 100 * time.Millisecond
+	defer func() { peerWriteTimeout = old }()
+	left, right := net.Pipe() // right never reads: every write blocks
+	defer right.Close()
+	l := &link{peer: core.Peer{ID: "bob", IP: "10.77.0.2"}, queue: make(chan []byte, 1), allowOutgoing: true}
+	l.queue <- ipv4(1, 2)
+	var mu sync.Mutex
+	result := make(chan error, 1)
+	go func() {
+		result <- l.session(context.Background(), left, netip.MustParseAddr("10.77.0.1"), io.Discard, &mu)
+	}()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("session ended without error")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("session kept blocking on a peer that does not read")
+	}
+}
+
+type deadlineRecorder struct {
+	net.Conn
+	read, write time.Time
+}
+
+func (c *deadlineRecorder) SetReadDeadline(t time.Time) error  { c.read = t; return nil }
+func (c *deadlineRecorder) SetWriteDeadline(t time.Time) error { c.write = t; return nil }
+func (c *deadlineRecorder) SetDeadline(t time.Time) error {
+	c.read, c.write = t, t
+	return nil
+}
+
+func TestCertificateConnClampsDeadlinesToExpiry(t *testing.T) {
+	expiry := time.Now().Add(time.Minute)
+	inner := &deadlineRecorder{}
+	c := &certificateConn{Conn: inner, deadline: expiry, expiry: expiry}
+	soon := time.Now().Add(time.Second)
+	if err := c.SetWriteDeadline(soon); err != nil || !inner.write.Equal(soon) {
+		t.Fatalf("earlier write deadline not kept: %v", inner.write)
+	}
+	if err := c.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil || !inner.write.Equal(expiry) {
+		t.Fatalf("write deadline extended past certificate expiry: %v", inner.write)
+	}
+	if err := c.SetReadDeadline(time.Time{}); err != nil || !inner.read.Equal(expiry) {
+		t.Fatalf("clearing the read deadline removed the certificate deadline: %v", inner.read)
+	}
+	if err := c.SetDeadline(time.Time{}); err != nil || !inner.read.Equal(expiry) || !inner.write.Equal(expiry) {
+		t.Fatal("SetDeadline removed the certificate deadline")
+	}
+}
