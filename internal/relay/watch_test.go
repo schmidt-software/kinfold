@@ -69,3 +69,43 @@ func TestWatchFailsClosedOnInvalidPKIAndRecovers(t *testing.T) {
 	}
 	waitAvailable(true)
 }
+
+func TestWatchClosesRelayWhenTLSIdentityChanges(t *testing.T) {
+	dir := t.TempDir()
+	state, err := core.NewState("localhost:8443", "10.77.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := core.WriteJSON(filepath.Join(dir, "state.json"), state); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(state.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		server.Watch(done, state, func() (*core.State, error) { return core.LoadState(dir) }, 10*time.Millisecond)
+	}()
+	defer func() { close(done); <-stopped }()
+	renewed := *state
+	if err := renewed.RenewServerCertificate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.WriteJSON(filepath.Join(dir, "state.json"), &renewed); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		server.mu.Lock()
+		available := server.available
+		server.mu.Unlock()
+		if !available {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("relay stayed available after the controller TLS identity changed")
+}
