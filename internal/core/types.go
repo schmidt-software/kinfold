@@ -82,11 +82,14 @@ func (c Config) Validate() error {
 	if err != nil || !prefix.Addr().Is4() || prefix != prefix.Masked() || prefix.Bits() > 30 {
 		return errors.New("network must be a canonical IPv4 prefix no smaller than /30")
 	}
+	if !privateIPv4(prefix) {
+		return errors.New("network must lie within 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 or 100.64.0.0/10")
+	}
 	var prefix6 netip.Prefix
 	if c.Network6 != "" {
 		prefix6, err = netip.ParsePrefix(c.Network6)
 		ula := netip.MustParsePrefix("fd00::/8")
-		if err != nil || !prefix6.Addr().Is6() || prefix6.Addr().Is4In6() || prefix6.Bits() != 64 || prefix6 != prefix6.Masked() || !ula.Contains(prefix6.Addr()) {
+		if err != nil || !prefix6.Addr().Is6() || prefix6.Addr().Is4In6() || prefix6.Bits() != 64 || prefix6 != prefix6.Masked() || !ula.Contains(prefix6.Addr()) || prefix6.String() != c.Network6 {
 			return errors.New("IPv6 network must be a canonical fd00::/8 ULA /64 prefix")
 		}
 	}
@@ -107,7 +110,7 @@ func (c Config) Validate() error {
 		}
 		if p.IPv6 != "" {
 			ip6, err := netip.ParseAddr(p.IPv6)
-			if err != nil || !prefix6.IsValid() || !ip6.Is6() || ip6.Is4In6() || ip6.Zone() != "" || !prefix6.Contains(ip6) || ip6 == prefix6.Addr() {
+			if err != nil || !prefix6.IsValid() || !ip6.Is6() || ip6.Is4In6() || ip6.Zone() != "" || !prefix6.Contains(ip6) || ip6 == prefix6.Addr() || ip6.String() != p.IPv6 {
 				return fmt.Errorf("invalid IPv6 address %q for peer %s", p.IPv6, p.ID)
 			}
 			if ips6[ip6] {
@@ -350,4 +353,18 @@ func (c Config) Clone() Config {
 		out.Policy = &policy
 	}
 	return out
+}
+
+// privateIPv4 reports whether prefix lies entirely inside the RFC 1918
+// private or the RFC 6598 shared address space. Anything else (0.0.0.0/0,
+// loopback, link-local, multicast, public space) would let a configuration
+// route unrelated host traffic into the tunnel (review C-03).
+func privateIPv4(prefix netip.Prefix) bool {
+	for _, allowed := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"} {
+		p := netip.MustParsePrefix(allowed)
+		if prefix.Bits() >= p.Bits() && p.Contains(prefix.Addr()) {
+			return true
+		}
+	}
+	return false
 }
