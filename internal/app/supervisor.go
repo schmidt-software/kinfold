@@ -35,8 +35,12 @@ func (d *ownedTunnel) Close() error {
 	return d.err
 }
 
-// supervise fails closed on refresh errors and recreates the tunnel on change.
-func supervise(ctx context.Context, cred core.Credential, iface string, initial core.Config, initialID string, interval time.Duration, open tunnelOpener, fetch configFetcher, run agentRunner) (result error) {
+// supervise keeps the tunnel in line with the controller configuration. A
+// failed fetch is tolerated for up to grace (see decision D-013); after that
+// the tunnel is closed (fail closed) until the controller answers again. A
+// failed tunnel start after a configuration change is retried on the next
+// tick instead of terminating the client.
+func supervise(ctx context.Context, cred core.Credential, iface string, initial core.Config, initialID string, interval, grace time.Duration, open tunnelOpener, fetch configFetcher, run agentRunner) (result error) {
 	var cancel context.CancelFunc
 	var done chan error
 	var revision string
@@ -102,7 +106,8 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 			cancelFetch()
 		}
 	}()
-	unavailable := false
+	var failingSince time.Time // zero while the controller answers
+	startFailed := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -137,14 +142,22 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 				return stop()
 			}
 			if err != nil {
-				if stopErr := stop(); stopErr != nil {
-					return stopErr
+				now := time.Now()
+				if failingSince.IsZero() {
+					failingSince = now
+					slog.Warn("controller refresh failed; keeping tunnel during grace period", "error", err, "grace", grace)
 				}
-				if !unavailable {
-					slog.Warn("controller refresh failed; tunnel closed", "error", err)
+				if cancel != nil && now.Sub(failingSince) >= grace {
+					if stopErr := stop(); stopErr != nil {
+						return stopErr
+					}
+					slog.Warn("controller unreachable beyond grace period; tunnel closed", "error", err, "since", failingSince)
 				}
-				unavailable = true
 				continue
+			}
+			if !failingSince.IsZero() {
+				slog.Info("controller reachable again", "outage", time.Since(failingSince).Round(time.Second))
+				failingSince = time.Time{}
 			}
 			next, err := cfg.Revision()
 			if err != nil {
@@ -157,14 +170,30 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 				return err
 			}
 			if err := start(cfg, id); err != nil {
-				return err
+				if !startFailed {
+					slog.Warn("tunnel start failed; retrying", "error", err)
+				}
+				startFailed = true
+				continue
+			}
+			if startFailed {
+				slog.Info("tunnel start recovered")
+				startFailed = false
 			}
 			initialID = id
-			unavailable = false
 		}
 	}
 }
 
+// fetchGrace is how long the client keeps its tunnel while the controller
+// cannot be reached. It is bounded because a client that cannot fetch also
+// cannot learn about policy changes; the relay enforces membership and the
+// current revision independently (D-013).
+const fetchGrace = 30 * time.Second
+
 func runSupervised(ctx context.Context, cred core.Credential, cfg core.Config, id, iface string) error {
-	return supervise(ctx, cred, iface, cfg, id, 2*time.Second, agent.OpenTunnel, agent.FetchConfig, agent.Run)
+	client := agent.NewConfigClient(cred)
+	defer client.Close()
+	fetch := func(ctx context.Context, _ core.Credential) (core.Config, string, error) { return client.Fetch(ctx) }
+	return supervise(ctx, cred, iface, cfg, id, 2*time.Second, fetchGrace, agent.OpenTunnel, fetch, agent.Run)
 }
