@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -601,6 +599,9 @@ func Run(args []string) error {
 		f := flags("serve")
 		dir := f.String("data", "controller-data", "controller data directory")
 		listen := f.String("listen", ":8443", "TCP listen address")
+		maxConns := f.Int("max-conns", relay.DefaultListenerLimits.Total, "maximum concurrent TCP connections")
+		maxPerIP := f.Int("max-conns-per-ip", relay.DefaultListenerLimits.PerSource, "maximum concurrent TCP connections per source IP (0 disables)")
+		ratePerIP := f.Float64("conn-rate-per-ip", relay.DefaultListenerLimits.RatePerSource, "new TCP connections per second per source IP (0 disables)")
 		logging := addLogFlags(f)
 		if err := f.Parse(args[1:]); err != nil {
 			return err
@@ -626,17 +627,14 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
-		ln, err := net.Listen("tcp", *listen)
-		if err != nil {
-			return err
-		}
-		ln, err = relay.LimitListener(ln, 1152)
-		if err != nil {
-			return err
-		}
-		server := &http.Server{Handler: handler, TLSConfig: tlsCfg, ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 16 << 10}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		limits := relay.ListenerLimits{Total: *maxConns, PerSource: *maxPerIP, RatePerSource: *ratePerIP, BurstPerSource: max(*maxPerIP, 1)}
+		ln, err := listenController(ctx, *listen, limits)
+		if err != nil {
+			return err
+		}
+		server := newControllerServer(handler, tlsCfg, defaultServerTimeouts)
 		slog.Info("controller listening", "address", ln.Addr().String(), "build", readBuildInfo().short(), "peers", len(s.Config.Peers))
 		return serveController(ctx, server, ln, handler, func(ctx context.Context) {
 			handler.Watch(ctx.Done(), s, func() (*core.State, error) { return core.LoadState(*dir) }, time.Second)
