@@ -90,31 +90,34 @@ func TestAdmissionLimitsAndRelease(t *testing.T) {
 		}
 	}()
 	add("alice", "bob")
-	if got := s.admissionStatus("alice", "bob"); got != http.StatusConflict {
-		t.Fatalf("duplicate endpoint: %d", got)
+	if stale := s.supersede("alice", "bob"); len(stale) != 1 {
+		t.Fatalf("supersede returned %d connections, want 1", len(stale))
 	}
-	for i := 1; i < maxPeerEndpoints; i++ {
+	if len(s.active) != 0 {
+		t.Fatal("superseded endpoint still counted")
+	}
+	for i := 0; i < maxPeerEndpoints; i++ {
 		add("alice", fmt.Sprintf("peer-%d", i))
 	}
-	if got := s.admissionStatus("alice", "charlie"); got != http.StatusTooManyRequests {
+	if got := s.admissionStatus("alice"); got != http.StatusTooManyRequests {
 		t.Fatalf("per-peer limit: %d", got)
 	}
-	if got := s.admissionStatus("bob", "alice"); got != 0 {
+	if got := s.admissionStatus("bob"); got != 0 {
 		t.Fatalf("unrelated endpoint rejected: %d", got)
 	}
 	for len(s.active) < maxRelayEndpoints {
 		add("other", fmt.Sprint(len(s.active)))
 	}
-	if got := s.admissionStatus("bob", "alice"); got != http.StatusTooManyRequests {
+	if got := s.admissionStatus("bob"); got != http.StatusTooManyRequests {
 		t.Fatalf("global limit: %d", got)
 	}
-	s.forget(conns[0])
-	if got := s.admissionStatus("bob", "alice"); got != 0 {
+	s.forget(conns[2])
+	if got := s.admissionStatus("bob"); got != 0 {
 		t.Fatalf("capacity was not released: %d", got)
 	}
 }
 
-func TestDuplicateRelayRequestIsRejected(t *testing.T) {
+func TestRelayReconnectSupersedesStaleSession(t *testing.T) {
 	state, err := core.NewState("127.0.0.1:8443", "10.77.0.0/24")
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +190,22 @@ func TestDuplicateRelayRequestIsRejected(t *testing.T) {
 	}
 	second, status := connect()
 	defer second.Close()
-	if status != http.StatusConflict {
-		t.Fatalf("duplicate request: %d", status)
+	if status != http.StatusOK {
+		t.Fatalf("reconnect for the same pair was rejected: %d", status)
+	}
+	// The stale first session must be torn down by the relay.
+	if err := first.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Read(make([]byte, 1)); err == nil {
+		t.Fatal("stale session still delivers data")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("stale session was not closed")
+	}
+	handler.mu.Lock()
+	n := len(handler.active)
+	handler.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("active endpoints = %d, want 1", n)
 	}
 }
