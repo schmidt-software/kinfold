@@ -35,7 +35,10 @@ func serveController(ctx context.Context, server *http.Server, listener net.List
 		return nil
 	case <-ctx.Done():
 	}
+	// Stop the watcher before closing the relay, so a reload tick in between
+	// cannot report the deliberately closed relay as a failure (review R-08).
 	stopWatch()
+	<-watchDone
 	handler.Close()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
 	shutdownErr := server.Shutdown(shutdownCtx)
