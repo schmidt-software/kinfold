@@ -42,3 +42,5 @@ signing/*
 credentials/*
 !credentials/README.md
 # <<< agentlas local project state <<<
+
+.DS_Store
