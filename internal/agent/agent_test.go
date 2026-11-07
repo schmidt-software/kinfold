@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -190,19 +191,27 @@ func TestRelayPeerTLSAndPinning(t *testing.T) {
 		t.Fatalf("packet: %v %v", read, err)
 	}
 
-	// A controller-provided wrong certificate must not authenticate Bob as Alice.
+	// A controller-provided wrong certificate must not authenticate Bob as
+	// Alice: Bob pins "alice" to Bob's own certificate, so Bob must reject
+	// Alice's real certificate with the pin error, and no payload may pass.
 	peerA.Cert = peerB.Cert
-	go func() { c, err := Connect(ctx, a, cfg, "alice", peerB); ch <- result{c, err} }()
-	go func() { c, err := Connect(ctx, b, cfg, "bob", peerA); ch <- result{c, err} }()
-	first, second = <-ch, <-ch
-	if first.c != nil {
-		first.c.Close()
+	aliceCh, bobCh := make(chan result, 1), make(chan result, 1)
+	go func() { c, err := Connect(ctx, a, cfg, "alice", peerB); aliceCh <- result{c, err} }()
+	go func() { c, err := Connect(ctx, b, cfg, "bob", peerA); bobCh <- result{c, err} }()
+	aliceRes, bobRes := <-aliceCh, <-bobCh
+	if bobRes.c != nil {
+		bobRes.c.Close()
 	}
-	if second.c != nil {
-		second.c.Close()
+	if bobRes.err == nil || !strings.Contains(bobRes.err.Error(), "does not match authorized peer alice") {
+		t.Fatalf("bob did not reject the mismatched pin: %v", bobRes.err)
 	}
-	if first.err == nil && second.err == nil {
-		t.Fatal("peer certificate pin mismatch was accepted")
+	if aliceRes.c != nil {
+		defer aliceRes.c.Close()
+		aliceRes.c.SetDeadline(time.Now().Add(time.Second))
+		_ = WritePacket(aliceRes.c, msg)
+		if _, err := ReadPacket(aliceRes.c); err == nil {
+			t.Fatal("payload passed over a session with a pin mismatch")
+		}
 	}
 }
 
