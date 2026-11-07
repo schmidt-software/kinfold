@@ -104,3 +104,36 @@ func TestDirectionalPolicy(t *testing.T) {
 		t.Fatal("modified configuration without policy")
 	}
 }
+
+func TestConfigCloneIsDeepAndRevisionEqual(t *testing.T) {
+	s, err := NewState("localhost:8443", "10.77.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct{ id, ip string }{{"alice", "10.77.0.1"}, {"bob", "10.77.0.2"}} {
+		if _, err := s.AddPeer(p.id, p.ip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Config.SetRule("alice", "bob", true); err != nil {
+		t.Fatal(err)
+	}
+	s.Config.Policy.Services = &ServicePolicy{Allowed: []ServiceRule{}}
+	clone := s.Config.Clone()
+	before, _ := clone.Revision()
+	original, _ := s.Config.Revision()
+	if before != original {
+		t.Fatal("clone serialises differently from the original")
+	}
+	if err := s.Config.SetRule("bob", "alice", true); err != nil {
+		t.Fatal(err)
+	}
+	s.Config.Peers[0].Cert[0] ^= 0xff
+	s.Config.Policy.Services.Allowed = append(s.Config.Policy.Services.Allowed, ServiceRule{From: "alice", To: "bob", Protocol: "icmp"})
+	if after, _ := clone.Revision(); after != before {
+		t.Fatal("changes to the original leaked into the clone")
+	}
+	if (Config{Network: "10.77.0.0/24"}).Clone().Policy != nil {
+		t.Fatal("clone invented a policy")
+	}
+}

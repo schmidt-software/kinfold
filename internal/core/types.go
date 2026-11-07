@@ -320,3 +320,34 @@ func SyncParentDir(path string) error {
 	}
 	return nil
 }
+
+// Clone returns a deep copy, so a holder of the copy is not affected by
+// later in-place changes to the original's slices or policy.
+func (c Config) Clone() Config {
+	out := c
+	out.Peers = make([]Peer, len(c.Peers))
+	for i, p := range c.Peers {
+		p.Cert = append([]byte(nil), p.Cert...)
+		out.Peers[i] = p
+	}
+	if c.Peers == nil {
+		out.Peers = nil
+	}
+	if c.Policy != nil {
+		policy := *c.Policy
+		policy.Allowed = append([]Rule(nil), c.Policy.Allowed...)
+		if c.Policy.Allowed != nil && policy.Allowed == nil {
+			policy.Allowed = []Rule{}
+		}
+		if c.Policy.Services != nil {
+			services := *c.Policy.Services
+			services.Allowed = append([]ServiceRule(nil), c.Policy.Services.Allowed...)
+			if c.Policy.Services.Allowed != nil && services.Allowed == nil {
+				services.Allowed = []ServiceRule{}
+			}
+			policy.Services = &services
+		}
+		out.Policy = &policy
+	}
+	return out
+}
