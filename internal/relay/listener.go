@@ -4,36 +4,162 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 )
+
+// ListenerLimits bounds the TCP connections the controller accepts. All
+// limits apply before TLS, so they also protect against unauthenticated
+// clients that never complete a handshake.
+type ListenerLimits struct {
+	// Total is the maximum number of concurrently open connections.
+	Total int
+	// PerSource is the maximum number of concurrently open connections from
+	// one remote IP address. Zero disables the per-source limit.
+	PerSource int
+	// RatePerSource is the sustained number of new connections per second
+	// accepted from one remote IP address. Zero disables rate limiting.
+	RatePerSource float64
+	// BurstPerSource is the number of new connections one remote IP address
+	// may open at once before the rate applies. It must be at least 1 when
+	// RatePerSource is set.
+	BurstPerSource int
+}
+
+// DefaultListenerLimits fits the 32-device mesh: a client holds one control
+// connection plus at most 31 relay connections, and opens them in a burst
+// after a controller restart. A single source therefore needs up to 32
+// connections; 64 leaves room for two devices behind one NAT address.
+var DefaultListenerLimits = ListenerLimits{Total: 1152, PerSource: 64, RatePerSource: 20, BurstPerSource: 64}
 
 // LimitListener bounds accepted TCP connections, including TLS handshakes and
 // hijacked relay connections. Close unblocks an Accept waiting for capacity.
 func LimitListener(inner net.Listener, limit int) (net.Listener, error) {
-	if inner == nil || limit <= 0 {
+	return NewLimitedListener(inner, ListenerLimits{Total: limit})
+}
+
+// NewLimitedListener applies the given limits to inner. Connections over a
+// per-source limit are accepted and closed immediately, so one source cannot
+// fill the operating system backlog for everyone else; the global limit
+// makes Accept wait as before.
+func NewLimitedListener(inner net.Listener, limits ListenerLimits) (net.Listener, error) {
+	if inner == nil || limits.Total <= 0 {
 		return nil, fmt.Errorf("listener and positive connection limit required")
 	}
-	return &limitedListener{Listener: inner, slots: make(chan struct{}, limit), done: make(chan struct{})}, nil
+	if limits.PerSource < 0 || limits.RatePerSource < 0 || (limits.RatePerSource > 0 && limits.BurstPerSource < 1) {
+		return nil, fmt.Errorf("invalid per-source limits")
+	}
+	return &limitedListener{
+		Listener: inner,
+		limits:   limits,
+		slots:    make(chan struct{}, limits.Total),
+		done:     make(chan struct{}),
+		sources:  make(map[string]*sourceState),
+		now:      time.Now,
+	}, nil
+}
+
+type sourceState struct {
+	open   int
+	tokens float64
+	last   time.Time
 }
 
 type limitedListener struct {
 	net.Listener
-	slots chan struct{}
-	done  chan struct{}
-	once  sync.Once
+	limits ListenerLimits
+	slots  chan struct{}
+	done   chan struct{}
+	once   sync.Once
+
+	mu      sync.Mutex
+	sources map[string]*sourceState
+	now     func() time.Time
 }
 
 func (l *limitedListener) Accept() (net.Conn, error) {
-	select {
-	case <-l.done:
-		return nil, net.ErrClosed
-	case l.slots <- struct{}{}:
+	for {
+		select {
+		case <-l.done:
+			return nil, net.ErrClosed
+		case l.slots <- struct{}{}:
+		}
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			<-l.slots
+			return nil, err
+		}
+		source := remoteIP(conn)
+		if !l.admit(source) {
+			conn.Close()
+			<-l.slots
+			continue
+		}
+		return &limitedConn{Conn: conn, release: func() {
+			l.releaseSource(source)
+			<-l.slots
+		}}, nil
 	}
-	conn, err := l.Listener.Accept()
-	if err != nil {
-		<-l.slots
-		return nil, err
+}
+
+// admit applies the per-source limits and reserves a slot for source.
+func (l *limitedListener) admit(source string) bool {
+	if l.limits.PerSource == 0 && l.limits.RatePerSource == 0 {
+		return true
 	}
-	return &limitedConn{Conn: conn, release: func() { <-l.slots }}, nil
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	s := l.sources[source]
+	if s == nil {
+		s = &sourceState{tokens: float64(l.limits.BurstPerSource), last: now}
+		l.sources[source] = s
+	}
+	if l.limits.RatePerSource > 0 {
+		if elapsed := now.Sub(s.last); elapsed > 0 {
+			s.tokens = min(float64(l.limits.BurstPerSource), s.tokens+elapsed.Seconds()*l.limits.RatePerSource)
+		}
+		s.last = now
+		if s.tokens < 1 {
+			l.forgetIdle(source, s)
+			return false
+		}
+	}
+	if l.limits.PerSource > 0 && s.open >= l.limits.PerSource {
+		return false
+	}
+	if l.limits.RatePerSource > 0 {
+		s.tokens--
+	}
+	s.open++
+	return true
+}
+
+func (l *limitedListener) releaseSource(source string) {
+	if l.limits.PerSource == 0 && l.limits.RatePerSource == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if s := l.sources[source]; s != nil {
+		s.open--
+		l.forgetIdle(source, s)
+	}
+}
+
+// forgetIdle drops state for a source without open connections whose bucket
+// would be full again, so the map stays bounded by the open connections.
+// Caller holds l.mu.
+func (l *limitedListener) forgetIdle(source string, s *sourceState) {
+	if s.open > 0 {
+		return
+	}
+	if l.limits.RatePerSource > 0 {
+		refill := l.now().Sub(s.last).Seconds()*l.limits.RatePerSource + s.tokens
+		if refill < float64(l.limits.BurstPerSource) {
+			return
+		}
+	}
+	delete(l.sources, source)
 }
 
 func (l *limitedListener) Close() error {
@@ -43,6 +169,18 @@ func (l *limitedListener) Close() error {
 		err = l.Listener.Close()
 	})
 	return err
+}
+
+func remoteIP(conn net.Conn) string {
+	addr := conn.RemoteAddr()
+	if tcp, ok := addr.(*net.TCPAddr); ok {
+		return tcp.IP.String()
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return addr.String()
+	}
+	return host
 }
 
 type limitedConn struct {
