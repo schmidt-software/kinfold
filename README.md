@@ -234,10 +234,11 @@ Auch bei abgelaufenem Serverzertifikat kann `remove-peer` Geräte offline aus de
 go test -race ./...
 go vet ./...
 sh scripts/integration-docker.sh
-# Zeitlich begrenzte Fuzz-Läufe für Paketparser und Framing:
+# Zeitlich begrenzte Fuzz-Läufe für Paketparser, Framing, Relay-Antworten, Service-Filter und Konfiguration:
 go test ./internal/agent -run '^$' -fuzz '^FuzzPacketAddresses$' -fuzztime 30s
 go test ./internal/agent -run '^$' -fuzz '^FuzzPacketFraming$' -fuzztime 30s
 go test ./internal/agent -run '^$' -fuzz '^FuzzRelayResponse$' -fuzztime 30s
+go test ./internal/agent -run '^$' -fuzz '^FuzzServicePacket$' -fuzztime 30s
 go test ./internal/core -run '^$' -fuzz '^FuzzDecodeConfig$' -fuzztime 30s
 ```
 

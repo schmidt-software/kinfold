@@ -27,6 +27,7 @@ sh scripts/integration-docker.sh                            # end-to-end: 3 clie
 go test ./internal/agent -run '^$' -fuzz '^FuzzPacketAddresses$' -fuzztime 30s
 go test ./internal/agent -run '^$' -fuzz '^FuzzPacketFraming$'   -fuzztime 30s
 go test ./internal/agent -run '^$' -fuzz '^FuzzRelayResponse$'   -fuzztime 30s
+go test ./internal/agent -run '^$' -fuzz '^FuzzServicePacket$'   -fuzztime 30s
 go test ./internal/core  -run '^$' -fuzz '^FuzzDecodeConfig$'    -fuzztime 30s
 ```
 
