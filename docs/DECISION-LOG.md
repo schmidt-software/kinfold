@@ -231,3 +231,32 @@ format; the rename (D-001) already requires updating all nodes together.
 **Consequences:** Operators of a pre-policy state must run `policy-enable`
 and add rules once. Clients that receive a policy-less configuration from an
 old controller keep running but forward nothing and log a warning.
+
+## D-013 — 2026-11-08 — active — Bounded grace period for controller outages
+
+**Decision:** The client keeps its tunnel for up to 30 seconds while config
+fetches fail and closes it after that (fail closed). A failed tunnel start
+after a configuration change is retried on every poll instead of ending the
+process. Polling reuses one mutual-TLS connection.
+
+**Rationale:** Review findings A-02/A-03/A-04: a single failed poll tore
+down every session on every client, so a 2 s controller restart or a short
+network hiccup caused a full rebuild of the mesh; a transient
+"interface already exists" ended the client permanently; every poll cost a
+full TLS handshake.
+
+The grace period does not extend revocation, because in the relay-only
+design every data path passes through the controller:
+- a removed device is rejected by the relay's identity check immediately;
+- every configuration change closes all relay sessions, and a new session
+  requires the *current* configuration revision, so a client that cannot
+  fetch cannot reconnect with its stale view;
+- direction and service rules are enforced by the receiving endpoint, which
+  also cannot hold a session based on an outdated configuration.
+What the grace period does allow is a client keeping an *idle* tunnel
+interface up for 30 seconds while nothing can flow through it, which is the
+availability trade-off it is meant to buy. This argument must be revisited
+when a direct (non-relay) data path is added (#21).
+
+**Consequences:** Clients survive controller restarts without dropping the
+interface. The grace value is a constant for alpha.

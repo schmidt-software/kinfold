@@ -47,8 +47,11 @@ one direction is allowed, it cannot filter the encrypted stream by direction or
 packet content. The direction check therefore remains the task of the
 endpoints.
 
-A watcher reads the state file about every second; clients poll periodically
-and close their tunnel on fetch errors. Changes and broken state invalidate
+A watcher reads the state file about every second; clients poll every two
+seconds and close their tunnel when the controller has been unreachable for 30
+seconds. Because the relay requires the current configuration revision for
+every new session and closes all sessions on change, a client with a stale
+configuration cannot open or keep relay sessions in the meantime. Changes and broken state invalidate
 relay sessions after detection. The CLI, however, only confirms the local
 write, not the load or a consistent commit. There is no signed lease, no
 rollback protection and no proven time-bound revocation. The client limits

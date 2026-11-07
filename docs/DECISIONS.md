@@ -72,7 +72,7 @@ Write errors and incomplete writes at the TUN device terminate the agent and are
 
 The supervisor manages the lifecycle of the tunnel device: even on premature agent exit the device is closed exactly once, and a close error remains visible. Closing after an error guarantees no restoration of other operating system settings.
 
-The periodic configuration fetch runs alongside agent monitoring; at most one fetch is active at a time and it is cancelled on shutdown. This way a slow controller does not delay reporting an already failed agent. Fetch timeouts are not a time-bound revocation guarantee.
+The periodic configuration fetch runs alongside agent monitoring; at most one fetch is active at a time and it is cancelled on shutdown. This way a slow controller does not delay reporting an already failed agent. Fetch failures are tolerated for 30 seconds before the tunnel is closed (DECISION-LOG D-013). Fetch timeouts are not a time-bound revocation guarantee.
 
 ## Next milestones
 
