@@ -1,6 +1,10 @@
 package core
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestValidateRestrictsIPv4NetworkToPrivateSpace(t *testing.T) {
 	for _, network := range []string{"10.0.0.0/8", "10.77.0.0/24", "172.16.5.0/24", "172.31.255.0/30", "192.168.1.0/24", "100.64.0.0/16"} {
@@ -43,3 +47,70 @@ func TestValidateRequiresCanonicalIPv6(t *testing.T) {
 }
 
 // signWithCA issues a certificate from the state's CA for an arbitrary template.
+
+func TestRevisionIsStableAcrossJSONRoundTrip(t *testing.T) {
+	s, err := NewState("localhost:8443", "10.77.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct{ id, ip string }{{"alice", "10.77.0.1"}, {"bob", "10.77.0.2"}} {
+		if _, err := s.AddPeer(p.id, p.ip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Config.SetRule("alice", "bob", true); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Config.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := s.Config.Revision(); again != first {
+		t.Fatal("revision is not deterministic")
+	}
+	data, err := json.Marshal(s.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Config
+	if err := DecodeJSON(strings.NewReader(string(data)), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := decoded.Revision(); got != first {
+		t.Fatal("controller and client would compute different revisions for the same configuration")
+	}
+	if err := s.Config.SetRule("bob", "alice", true); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := s.Config.Revision(); changed == first {
+		t.Fatal("revision did not change with the policy")
+	}
+}
+
+func TestSetRuleDoesNotMutateSharedSlices(t *testing.T) {
+	s, err := NewState("localhost:8443", "10.77.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct{ id, ip string }{{"alice", "10.77.0.1"}, {"bob", "10.77.0.2"}, {"carol", "10.77.0.3"}} {
+		if _, err := s.AddPeer(p.id, p.ip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, r := range [][2]string{{"alice", "bob"}, {"bob", "carol"}} {
+		if err := s.Config.SetRule(r[0], r[1], true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Config.Policy.Services = &ServicePolicy{Allowed: []ServiceRule{{From: "bob", To: "carol", Protocol: "icmp"}, {From: "alice", To: "bob", Protocol: "icmp"}}}
+	rules, services := s.Config.Policy.Allowed, s.Config.Policy.Services.Allowed
+	if err := s.Config.SetRule("alice", "bob", false); err != nil {
+		t.Fatal(err)
+	}
+	if rules[0] != (Rule{From: "alice", To: "bob"}) || rules[1] != (Rule{From: "bob", To: "carol"}) {
+		t.Fatalf("SetRule edited a previously shared rule slice: %v", rules)
+	}
+	if services[0].From != "bob" || services[1].From != "alice" {
+		t.Fatalf("SetRule edited a previously shared service slice: %v", services)
+	}
+}

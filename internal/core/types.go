@@ -191,12 +191,14 @@ func (c *Config) SetRule(from, to string, allow bool) error {
 			break
 		}
 	}
+	// Build new slices instead of editing in place: other Config values may
+	// share the backing arrays through the Policy pointer (review C-12).
 	if allow && index < 0 {
-		c.Policy.Allowed = append(c.Policy.Allowed, rule)
+		c.Policy.Allowed = append(append(make([]Rule, 0, len(c.Policy.Allowed)+1), c.Policy.Allowed...), rule)
 	} else if !allow && index >= 0 {
-		c.Policy.Allowed = append(c.Policy.Allowed[:index], c.Policy.Allowed[index+1:]...)
+		c.Policy.Allowed = withoutIndex(c.Policy.Allowed, index)
 		if c.Policy.Services != nil {
-			services := c.Policy.Services.Allowed[:0]
+			services := make([]ServiceRule, 0, len(c.Policy.Services.Allowed))
 			for _, s := range c.Policy.Services.Allowed {
 				if s.From != from || s.To != to {
 					services = append(services, s)
@@ -206,6 +208,26 @@ func (c *Config) SetRule(from, to string, allow bool) error {
 		}
 	}
 	return nil
+}
+
+func withoutIndex[T any](items []T, index int) []T {
+	out := make([]T, 0, len(items)-1)
+	out = append(out, items[:index]...)
+	return append(out, items[index+1:]...)
+}
+
+// privateIPv4 reports whether prefix lies entirely inside the RFC 1918
+// private or the RFC 6598 shared address space. Anything else (0.0.0.0/0,
+// loopback, link-local, multicast, public space) would let a configuration
+// route unrelated host traffic into the tunnel (review C-03).
+func privateIPv4(prefix netip.Prefix) bool {
+	for _, allowed := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"} {
+		p := netip.MustParsePrefix(allowed)
+		if prefix.Bits() >= p.Bits() && p.Contains(prefix.Addr()) {
+			return true
+		}
+	}
+	return false
 }
 
 func validService(protocol string, port uint16) bool {
@@ -237,9 +259,9 @@ func (c *Config) SetServiceRule(from, to, protocol string, port uint16, allow bo
 		if len(c.Policy.Services.Allowed) >= MaxServiceRules {
 			return fmt.Errorf("at most %d service rules are supported", MaxServiceRules)
 		}
-		c.Policy.Services.Allowed = append(c.Policy.Services.Allowed, rule)
+		c.Policy.Services.Allowed = append(append(make([]ServiceRule, 0, len(c.Policy.Services.Allowed)+1), c.Policy.Services.Allowed...), rule)
 	} else if !allow && index >= 0 {
-		c.Policy.Services.Allowed = append(c.Policy.Services.Allowed[:index], c.Policy.Services.Allowed[index+1:]...)
+		c.Policy.Services.Allowed = withoutIndex(c.Policy.Services.Allowed, index)
 	}
 	return nil
 }
@@ -353,18 +375,4 @@ func (c Config) Clone() Config {
 		out.Policy = &policy
 	}
 	return out
-}
-
-// privateIPv4 reports whether prefix lies entirely inside the RFC 1918
-// private or the RFC 6598 shared address space. Anything else (0.0.0.0/0,
-// loopback, link-local, multicast, public space) would let a configuration
-// route unrelated host traffic into the tunnel (review C-03).
-func privateIPv4(prefix netip.Prefix) bool {
-	for _, allowed := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"} {
-		p := netip.MustParsePrefix(allowed)
-		if prefix.Bits() >= p.Bits() && p.Contains(prefix.Addr()) {
-			return true
-		}
-	}
-	return false
 }
