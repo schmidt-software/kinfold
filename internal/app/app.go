@@ -640,6 +640,9 @@ func Run(args []string) error {
 			return err
 		}
 		server := newControllerServer(handler, tlsCfg, defaultServerTimeouts)
+		for _, warning := range s.CertificateWarnings(time.Now(), 30*24*time.Hour) {
+			slog.Warn(warning)
+		}
 		slog.Info("controller listening", "address", ln.Addr().String(), "build", readBuildInfo().short(), "peers", len(s.Config.Peers))
 		return serveController(ctx, server, ln, handler, func(ctx context.Context) {
 			handler.Watch(ctx.Done(), s, func() (*core.State, error) { return core.LoadState(*dir) }, time.Second)

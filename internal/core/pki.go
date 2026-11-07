@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -71,7 +72,7 @@ func NewState(address, network string) (*State, error) {
 	ca := &x509.Certificate{
 		SerialNumber: n, Subject: pkix.Name{CommonName: "Kinfold CA"},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.AddDate(10, 0, 0),
-		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, ca, ca, pub, priv)
 	if err != nil {
@@ -96,7 +97,8 @@ func NewState(address, network string) (*State, error) {
 	server := &x509.Certificate{
 		SerialNumber: n, Subject: pkix.Name{CommonName: host},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.AddDate(1, 0, 0),
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	if ip := net.ParseIP(host); ip != nil {
 		server.IPAddresses = []net.IP{ip}
@@ -136,6 +138,9 @@ func (s *State) addPeerPublicKey(id, ip string, pub ed25519.PublicKey) ([]byte, 
 	}
 	if _, exists := s.Config.Peer(id); exists {
 		return nil, fmt.Errorf("peer %s already exists", id)
+	}
+	if host, _, err := net.SplitHostPort(s.Server); err == nil && strings.EqualFold(host, id) {
+		return nil, fmt.Errorf("peer ID %q equals the controller host name", id)
 	}
 	history, err := s.historyWithNewKey(pub)
 	if err != nil {
@@ -188,8 +193,9 @@ func (s *State) issuePeerCertificate(id string, pub ed25519.PublicKey) ([]byte, 
 	template := &x509.Certificate{
 		SerialNumber: n, Subject: pkix.Name{CommonName: id},
 		NotBefore: now.Add(-time.Minute), NotAfter: expires,
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca, pub, caPair.PrivateKey)
 	if err != nil {
@@ -280,8 +286,66 @@ func (s *State) validatePKI(renewServer bool) error {
 		if err := cert.CheckSignatureFrom(ca); err != nil {
 			return fmt.Errorf("peer %s is not signed by the controller CA: %w", peer.ID, err)
 		}
+		if err := checkPeerCertificate(peer.ID, cert); err != nil {
+			return fmt.Errorf("peer %s: %w", peer.ID, err)
+		}
 	}
 	return nil
+}
+
+// checkPeerCertificate enforces the shape of device certificates beyond the
+// CA signature (review C-02). Validity is deliberately not checked here: an
+// expired device must not take the whole controller down; it is reported by
+// CertificateWarnings and rejected by TLS.
+func checkPeerCertificate(id string, cert *x509.Certificate) error {
+	if cert.IsCA || cert.KeyUsage&x509.KeyUsageCertSign != 0 {
+		return fmt.Errorf("device certificate must not be a CA")
+	}
+	if cert.Subject.CommonName != id {
+		return fmt.Errorf("certificate common name %q does not match peer ID", cert.Subject.CommonName)
+	}
+	client, server := false, false
+	for _, usage := range cert.ExtKeyUsage {
+		client = client || usage == x509.ExtKeyUsageClientAuth
+		server = server || usage == x509.ExtKeyUsageServerAuth
+	}
+	if !client || !server || len(cert.ExtKeyUsage) != 2 {
+		return fmt.Errorf("device certificate must have exactly the client and server authentication usages")
+	}
+	if _, ok := cert.PublicKey.(ed25519.PublicKey); !ok {
+		return fmt.Errorf("device certificate must use an Ed25519 key")
+	}
+	return nil
+}
+
+// CertificateWarnings lists device, server and CA certificates that are
+// expired or expire within the given window.
+func (s *State) CertificateWarnings(now time.Time, window time.Duration) []string {
+	var warnings []string
+	check := func(name string, cert *x509.Certificate) {
+		switch {
+		case !now.Before(cert.NotAfter):
+			warnings = append(warnings, fmt.Sprintf("%s certificate expired on %s", name, cert.NotAfter.UTC().Format(time.DateOnly)))
+		case cert.NotAfter.Sub(now) < window:
+			warnings = append(warnings, fmt.Sprintf("%s certificate expires on %s", name, cert.NotAfter.UTC().Format(time.DateOnly)))
+		}
+	}
+	if block, _ := pem.Decode(s.CA); block != nil {
+		if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+			check("CA", cert)
+		}
+	}
+	if block, _ := pem.Decode(s.ServerCert); block != nil {
+		if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+			check("controller", cert)
+		}
+	}
+	for _, peer := range s.Config.Peers {
+		if cert, err := ParseCert(peer.Cert); err == nil {
+			check("device "+peer.ID, cert)
+		}
+	}
+	return warnings
 }
 
 // RenewServerCertificate creates a new controller key and certificate using the existing CA.
@@ -320,7 +384,8 @@ func (s *State) RenewServerCertificate() error {
 	template := &x509.Certificate{
 		SerialNumber: n, Subject: pkix.Name{CommonName: host},
 		NotBefore: now.Add(-time.Minute), NotAfter: expires,
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	if ip := net.ParseIP(host); ip != nil {
 		template.IPAddresses = []net.IP{ip}
