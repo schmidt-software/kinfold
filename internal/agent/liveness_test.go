@@ -2,9 +2,13 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,6 +42,7 @@ func TestSessionEndsWhenPeerStopsReading(t *testing.T) {
 type deadlineRecorder struct {
 	net.Conn
 	read, write time.Time
+	closed      bool
 }
 
 func (c *deadlineRecorder) SetReadDeadline(t time.Time) error  { c.read = t; return nil }
@@ -46,6 +51,7 @@ func (c *deadlineRecorder) SetDeadline(t time.Time) error {
 	c.read, c.write = t, t
 	return nil
 }
+func (c *deadlineRecorder) Close() error { c.closed = true; return nil }
 
 func TestCertificateConnClampsDeadlinesToExpiry(t *testing.T) {
 	expiry := time.Now().Add(time.Minute)
@@ -63,5 +69,49 @@ func TestCertificateConnClampsDeadlinesToExpiry(t *testing.T) {
 	}
 	if err := c.SetDeadline(time.Time{}); err != nil || !inner.read.Equal(expiry) || !inner.write.Equal(expiry) {
 		t.Fatal("SetDeadline removed the certificate deadline")
+	}
+}
+
+func TestCertificateConnCloseClosesSocketFirst(t *testing.T) {
+	socket, inner := &deadlineRecorder{}, &deadlineRecorder{}
+	c := &certificateConn{Conn: inner, socket: socket}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !socket.closed || !inner.closed {
+		t.Fatalf("socket closed %v, inner closed %v", socket.closed, inner.closed)
+	}
+}
+
+// A device certificate is CA-signed and carries the server-auth EKU, but no
+// SAN; it must not be accepted as the controller's certificate.
+func TestFetchConfigRejectsDeviceCertificateAsController(t *testing.T) {
+	state, err := core.NewState("127.0.0.1:8443", "10.77.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, err := state.AddPeer("alice", "10.77.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mallory, err := state.AddPeer("mallory", "10.77.0.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := tls.X509KeyPair(mallory.Cert, mallory.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("request reached the impostor controller")
+	}))
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}
+	server.StartTLS()
+	defer server.Close()
+	alice.Server = server.Listener.Addr().String()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := FetchConfig(ctx, alice); err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("device certificate accepted as controller: %v", err)
 	}
 }

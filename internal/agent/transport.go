@@ -20,6 +20,10 @@ import (
 
 const maxControllerResponseHeaderBytes = 16 << 10
 
+// clientKeepAlive detects a dead relay connection in about 30 s instead of
+// the default 15 s + 9 × 15 s (review R-04).
+var clientKeepAlive = net.KeepAliveConfig{Enable: true, Idle: 15 * time.Second, Interval: 5 * time.Second, Count: 3}
+
 func outerTLS(c core.Credential) (*tls.Config, error) {
 	cert, err := tls.X509KeyPair(c.Cert, c.Key)
 	if err != nil {
@@ -50,7 +54,7 @@ func FetchConfig(ctx context.Context, cred core.Credential) (core.Config, string
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return core.Config{}, "", fmt.Errorf("controller: %s", resp.Status)
+		return core.Config{}, "", fmt.Errorf("controller: %q", resp.Status)
 	}
 	var cfg core.Config
 	if err := core.DecodeJSON(resp.Body, &cfg); err != nil {
@@ -104,7 +108,7 @@ func Connect(ctx context.Context, cred core.Credential, cfg core.Config, ownID s
 	if err != nil {
 		return nil, err
 	}
-	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 10 * time.Second}, Config: tlsCfg}
+	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 10 * time.Second, KeepAliveConfig: clientKeepAlive}, Config: tlsCfg}
 	raw, err := dialer.DialContext(ctx, "tcp", cred.Server)
 	if err != nil {
 		return nil, err
@@ -133,7 +137,7 @@ func Connect(ctx context.Context, cred core.Credential, cfg core.Config, ownID s
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("relay: %s", resp.Status)
+		return nil, fmt.Errorf("relay: %q", resp.Status)
 	}
 	underlying := &bufferedConn{Conn: raw, reader: reader}
 	peerCert, err := core.ParseCert(peer.Cert)
@@ -193,12 +197,14 @@ func Connect(ctx context.Context, cred core.Credential, cfg core.Config, ownID s
 		return nil, err
 	}
 	success = true
-	return &certificateConn{Conn: conn, deadline: deadline, expiry: expiry}, nil
+	return &certificateConn{Conn: conn, socket: raw, deadline: deadline, expiry: expiry}, nil
 }
 
 // A socket deadline alone does not stop reads from TLS's plaintext buffer.
 type certificateConn struct {
 	net.Conn
+	// socket is the outer controller connection carrying the inner session.
+	socket   net.Conn
 	deadline time.Time
 	expiry   time.Time
 }
@@ -225,6 +231,20 @@ func (c *certificateConn) SetReadDeadline(t time.Time) error {
 
 func (c *certificateConn) SetWriteDeadline(t time.Time) error {
 	return c.Conn.SetWriteDeadline(c.clamp(t))
+}
+
+// Close tears down the TCP socket first. Closing the two stacked TLS
+// connections gracefully writes two close_notify records with 5 s deadlines
+// each, which a dead path turns into a 10 s shutdown stall (review A-07).
+func (c *certificateConn) Close() error {
+	if c.socket != nil {
+		if tc, ok := c.socket.(interface{ NetConn() net.Conn }); ok {
+			tc.NetConn().Close()
+		} else {
+			c.socket.Close()
+		}
+	}
+	return c.Conn.Close()
 }
 
 func (c *certificateConn) expired() bool {
