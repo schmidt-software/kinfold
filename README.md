@@ -51,7 +51,7 @@ The script builds a Linux binary, creates temporary credentials and an isolated 
 
 ## Manual setup
 
-The controller runs on Linux or macOS; the VPN client currently requires **Linux**, `/dev/net/tun`, the `ip` command from iproute2 or BusyBox, and administrator rights or `CAP_NET_ADMIN`. The virtual network must not overlap with existing local networks or routes.
+The controller runs on Linux or macOS; the VPN client currently requires **Linux**, `/dev/net/tun`, the `ip` command from iproute2 or BusyBox in `/usr/sbin`, `/sbin`, `/usr/bin` or `/bin` (`PATH` is not used), and administrator rights or `CAP_NET_ADMIN`. The virtual network must not overlap with existing local networks or routes.
 
 1. Build and initialize on the controller. Replace `vpn.example.com:8443` with the DNS name or IP address and TCP port of the controller reachable by all clients. The name is embedded in the server certificate and must match the name used.
 
