@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"reflect"
 	"sync"
 	"time"
 
@@ -36,6 +35,8 @@ const (
 
 type Server struct {
 	config     core.Config
+	revision   string            // config.Revision(), computed once per update
+	members    map[string]string // certificate fingerprint -> peer ID
 	mu         sync.Mutex
 	waiting    map[string]*pending
 	active     map[net.Conn]endpoint
@@ -45,16 +46,46 @@ type Server struct {
 }
 
 func New(config core.Config) (*Server, error) {
+	config = config.Clone()
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	return &Server{config: config, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}, nil
+	revision, members, err := derive(config)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{config: config, revision: revision, members: members, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}, nil
+}
+
+// derive precomputes the per-request lookups for a validated configuration
+// so requests do not parse certificates or marshal the configuration under
+// the relay lock (review R-07).
+func derive(config core.Config) (string, map[string]string, error) {
+	revision, err := config.Revision()
+	if err != nil {
+		return "", nil, err
+	}
+	members := make(map[string]string, len(config.Peers))
+	for _, peer := range config.Peers {
+		cert, err := core.ParseCert(peer.Cert)
+		if err != nil {
+			return "", nil, fmt.Errorf("peer %s: %w", peer.ID, err)
+		}
+		members[core.Fingerprint(cert)] = peer.ID
+	}
+	return revision, members, nil
 }
 
 // Update invalidates all existing sessions on changes or invalid state.
 func (s *Server) Update(config core.Config, err error) error {
+	var revision string
+	var members map[string]string
+	config = config.Clone()
 	if err == nil {
 		err = config.Validate()
+	}
+	if err == nil {
+		revision, members, err = derive(config)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,9 +99,9 @@ func (s *Server) Update(config core.Config, err error) error {
 		s.available = false
 		return err
 	}
-	if !s.available || !reflect.DeepEqual(s.config, config) {
+	if !s.available || s.revision != revision {
 		s.invalidate()
-		s.config = config
+		s.config, s.revision, s.members = config, revision, members
 	}
 	s.available = true
 	return nil
@@ -146,29 +177,23 @@ func TLSConfig(s *core.State) (*tls.Config, error) {
 	}, nil
 }
 
-func identity(r *http.Request, config core.Config) (string, bool) {
+func identity(r *http.Request, members map[string]string) (string, bool) {
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
 		return "", false
 	}
-	fp := core.Fingerprint(r.TLS.PeerCertificates[0])
-	for _, peer := range config.Peers {
-		cert, err := core.ParseCert(peer.Cert)
-		if err == nil && core.Fingerprint(cert) == fp {
-			return peer.ID, true
-		}
-	}
-	return "", false
+	id, ok := members[core.Fingerprint(r.TLS.PeerCertificates[0])]
+	return id, ok
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	config, available, generation := s.config, s.available, s.generation
+	config, members, available, generation := s.config, s.members, s.available, s.generation
 	s.mu.Unlock()
 	if !available {
 		reject(w, "configuration unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	id, ok := identity(r, config)
+	id, ok := identity(r, members)
 	if !ok {
 		reject(w, "not authorized", http.StatusForbidden)
 		return
@@ -208,8 +233,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		reject(w, "configuration changed", http.StatusServiceUnavailable)
 		return
 	}
-	revision, err := s.config.Revision()
-	if err != nil || r.Header.Get("X-Kinfold-Config-Revision") != revision {
+	if r.Header.Get("X-Kinfold-Config-Revision") != s.revision {
 		s.mu.Unlock()
 		reject(w, "current configuration required", http.StatusConflict)
 		return
