@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Kinfold is an experimental, self-hosted IPv4/optional-IPv6 overlay network prototype with its own protocol (not compatible with any other VPN product). Do not reference other VPN/overlay products by name in code or docs. Go toolchain pinned in go.mod (see D-009), standard library only (no external modules — keep it that way; see ENTSCHEIDUNGEN.md §2). Not production-ready; the controller is a full trust anchor.
+Kinfold is an experimental, self-hosted IPv4/optional-IPv6 overlay network prototype with its own protocol (not compatible with any other VPN product). Do not reference other VPN/overlay products by name in code or docs. Go toolchain pinned in go.mod (see D-009), standard library only (no external modules — keep it that way; see docs/DECISIONS.md §2). Not production-ready; the controller is a full trust anchor.
 
 Repository language is English (code, comments, docs, CLI output, commits, PRs). Docs that must stay accurate when behavior changes:
 - `README.md` — feature list, CLI usage, known limitations
-- `ENTSCHEIDUNGEN.md` — architecture decision records (German, being migrated to `docs/DECISIONS.md`)
-- `SICHERHEITSMODELL.md` — threat model and open production requirements (German, being migrated to `docs/SECURITY-MODEL.md`)
+- `docs/DECISIONS.md` — architecture decision records
+- `docs/SECURITY-MODEL.md` — threat model and open production requirements
 - `docs/DECISION-LOG.md` — numbered log of every non-trivial decision; add an entry in the same PR as the change
 - `docs/review-v0.1-copilot.md` — consolidated review of the baseline (once merged)
 
@@ -47,4 +47,4 @@ Single binary (`main.go` → `app.Run`) acting as controller, relay and Linux cl
 - `internal/agent` — the client. `FetchConfig` / `Connect` talk to the controller with the outer mTLS; inside each relayed stream a second, end-to-end mutual TLS 1.3 session runs between the two devices, verified against the controller's peer list and CA. `certificateConn` enforces an I/O deadline at the earliest expiry of involved certs. `Run` reads packets from the TUN device, validates source/destination against assigned addresses (anti-spoofing), applies directed + service policy (`services.go`), and frames packets (`WritePacket`/`ReadPacket`, fixed MTU 1280) to per-peer `link`s with jittered exponential backoff (`backoff.go`). TUN is Linux-only (`tun_linux.go`; `tun_other.go` stubs it out) and configured via the `ip` command.
 - `internal/app` — CLI and lifecycle glue. `controller.go` runs the HTTP server with graceful shutdown (relay sessions closed immediately, HTTP requests drained up to 5 s). `supervisor.go` polls the config every 2 s and restarts the agent/tunnel on change; its dependencies (`tunnelOpener`, `configFetcher`, `agentRunner`) are injected function types so it is testable without a real TUN.
 
-**Trust/security invariants to preserve** (see SICHERHEITSMODELL.md): a certificate alone never authorizes — it must exactly match the currently loaded controller config; traffic is denied by default and checked per direction; size limits exist on all inputs (16 KiB response headers, 64 KiB enrollment files, MTU frame limit). Tests are organized by concern (`*_limits_test.go`, `*_fuzz_test.go`, `rotation_test.go`, `ipv6_test.go`, …) — add tests next to the matching concern.
+**Trust/security invariants to preserve** (see docs/SECURITY-MODEL.md): a certificate alone never authorizes — it must exactly match the currently loaded controller config; traffic is denied by default and checked per direction; size limits exist on all inputs (16 KiB response headers, 64 KiB enrollment files, MTU frame limit). Tests are organized by concern (`*_limits_test.go`, `*_fuzz_test.go`, `rotation_test.go`, `ipv6_test.go`, …) — add tests next to the matching concern.
