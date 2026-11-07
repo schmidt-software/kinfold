@@ -1,146 +1,154 @@
-# Sicherheitsmodell und Produktionsanforderungen
+# Security model and production requirements
 
-Dieses Dokument beschreibt den experimentellen Stand und Anforderungen an eine
-künftige Implementierung. Es ist **keine Sicherheitsfreigabe**. Protokoll,
-Transport, Konsensverfahren, Uhrmodell und konkrete Lease-Dauer sind noch nicht
-festgelegt. Eine unabhängige Prüfung und betriebliche Freigabe stehen aus.
+This document describes the experimental state and the requirements for a
+future implementation. It is **not a security approval**. Protocol, transport,
+consensus procedure, clock model and concrete lease duration are not yet
+defined. An independent review and operational approval are outstanding.
 
-## Schutzumfang und Vertrauensgrenzen
+## Scope of protection and trust boundaries
 
-Geschützt werden sollen Nutzdaten zwischen berechtigten Geräten, deren
-Schlüssel, die Integrität der Mitgliedschaft und Policy sowie die Isolation
-zwischen Netzen. Verfügbarkeit ist ein Ziel, aber keine Garantie gegen einen
-Angreifer, der Netzverbindungen oder Ressourcen vollständig unterbindet.
+The goal is to protect payload between authorized devices, their keys, the
+integrity of membership and policy, and the isolation between networks.
+Availability is a goal, but not a guarantee against an attacker who completely
+blocks network connections or resources.
 
-| Akteur oder Grenze | Annahme und Sicherheitsfolge |
+| Actor or boundary | Assumption and security consequence |
 | --- | --- |
-| Netzwerk und Relay | Dürfen Pakete lesen, verzögern, verändern, duplizieren oder verwerfen. Ein Relay darf keine Nutzdaten entschlüsseln; es sieht mindestens beteiligte Endpunkte, Zeitpunkte und Datenmengen. |
-| Gerät | Der lokale Betriebssystemkern und die VPN-Implementierung müssen für die Durchsetzung auf diesem Gerät vertrauenswürdig sein. Ein kompromittiertes Gerät kann seine eigenen Schlüssel und Daten preisgeben sowie lokale Regeln umgehen. Andere korrekte Geräte müssen es dennoch anhand ihrer eigenen aktuellen Autorisierung abweisen. |
-| Controller und Signierer | Autorisieren Mitgliedschaft und Policy. Ein kompromittierter autorisierter Signierer kann bösartige gültige Konfigurationen ausstellen; Signaturen allein verhindern das nicht. Getrennte Rollen, Schlüssel und revisionsfähige Administration begrenzen das Risiko, beseitigen es aber nicht. |
-| Administrator und Identitätsanbieter | Ein berechtigter kompromittierter Admin oder Identitätsanbieter kann missbräuchliche Aktionen autorisieren. MFA, minimale Rollen, Audit und kontrollierte Schlüsselrotation sind erforderlich; sie ersetzen keinen Schutz kompromittierter Berechtigungen. |
-| Lokaler Betreiber | Wer den Controllerzustand oder dessen CA-Schlüssel lesen oder verändern kann, kann im Prototyp Identitäten ausstellen oder die Konfiguration ersetzen. Zugriff auf Credential-Dateien erlaubt Geräteimitation. |
-| Plattform und Zeit | Speicher, sichere Schlüsselablage und Uhrvertrauen hängen von der jeweiligen Plattform ab. Manipulierbare Uhren oder zurückgerollter Zustand dürfen keine längere Autorisierung ermöglichen; ohne nachgewiesene Voraussetzungen ist die Fünf-Minuten-Garantie nicht erfüllbar. |
+| Network and relay | May read, delay, modify, duplicate or drop packets. A relay must not be able to decrypt payload; it sees at least the endpoints involved, timing and data volume. |
+| Device | The local operating system kernel and the VPN implementation must be trustworthy for enforcement on that device. A compromised device can disclose its own keys and data and bypass local rules. Other correct devices must nevertheless reject it based on their own current authorization. |
+| Controller and signer | Authorize membership and policy. A compromised authorized signer can issue malicious valid configurations; signatures alone do not prevent that. Separate roles, keys and auditable administration limit the risk but do not remove it. |
+| Administrator and identity provider | A legitimately authorized but compromised admin or identity provider can authorize abusive actions. MFA, minimal roles, audit and controlled key rotation are required; they do not replace protection of compromised privileges. |
+| Local operator | Whoever can read or modify the controller state or its CA key can, in the prototype, issue identities or replace the configuration. Access to credential files allows device impersonation. |
+| Platform and time | Storage, secure key storage and clock trust depend on the platform. Manipulable clocks or rolled-back state must not enable longer authorization; without proven prerequisites the five-minute guarantee cannot be met. |
 
-Ein kompromittierter Empfänger kann an ihn zugestellte Daten behalten oder
-weitergeben. Weder Verschlüsselung noch lokale Policy erzwingen die Löschung
-solcher Daten. Auch ein kompromittiertes Gerät kann gültige Pakete im Rahmen
-seiner Rechte erzeugen; deren Inhalt ist nicht durch dieses VPN autorisiert.
+A compromised receiver can keep or forward data delivered to it. Neither
+encryption nor local policy enforces deletion of such data. A compromised
+device can also generate valid packets within its rights; their content is not
+authorized by this VPN.
 
-## Bestehender Prototyp
+## Existing prototype
 
-Der Linux-Client bezieht eine Mitgliederliste über gegenseitig authentifiziertes
-TLS vom Controller. Die zusätzliche TLS-Verbindung pro Peer prüft Zertifikate
-gegen die gelieferte Liste und die CA. Die Liste ist nicht unabhängig signiert;
-der Controller kontrolliert sie und den CA-Schlüssel. Das ältere `add-peer`
-erzeugt Geräteschlüssel auf dem Controller, das Offline-Enrollment lokal.
+The Linux client obtains a member list from the controller over mutually
+authenticated TLS. The additional TLS connection per peer checks certificates
+against the delivered list and the CA. The list is not independently signed;
+the controller controls it and the CA key. The older `add-peer` generates
+device keys on the controller, offline enrollment generates them locally.
 
-Neue Netze haben gerichtete Gerätefreigaben mit Default-Deny. Sender und
-Empfänger prüfen die jeweilige Richtung und exakte Peer-Adressen. Ein optionaler
-experimenteller zusätzlicher Filter prüft Protokoll und exakte Zielports, ohne
-zustandsbehaftete Rückverkehrsregel; Fragmentierung und IP-Erweiterungen werden
-dabei verworfen. ICMP-Freigaben umfassen alle Typen. Ein manipuliertes
-Gerät kann seine eigenen Prüfungen umgehen. Legacy-Konfigurationen ohne Policy
-erlauben weiterhin den Verkehr. Der Relay-Konfigurationshash ist kein Nachweis
-unveränderter Clientsoftware. Der Relay lehnt Gerätepaare ohne Freigabe in
-beiden Richtungen ab; sobald mindestens eine Richtung erlaubt ist, kann er
-den verschlüsselten Datenstrom nicht nach Richtung oder Paketinhalt filtern.
-Die Richtungsprüfung bleibt deshalb Aufgabe der Endpunkte.
+New networks have directional device rules with default deny. Sender and
+receiver check the respective direction and exact peer addresses. An optional
+experimental additional filter checks protocol and exact destination ports,
+without a stateful return-traffic rule; fragmentation and IP extensions are
+dropped there. ICMP rules cover all types. A tampered device can bypass its own
+checks. Legacy configurations without a policy still allow traffic. The relay
+configuration hash is not proof of unmodified client software. The relay
+rejects device pairs without a rule in either direction; as soon as at least
+one direction is allowed, it cannot filter the encrypted stream by direction or
+packet content. The direction check therefore remains the task of the
+endpoints.
 
-Ein Watcher liest die Zustandsdatei ungefähr jede Sekunde; Clients fragen
-periodisch nach und schließen bei Abruffehlern ihren Tunnel. Änderungen und
-defekter Zustand invalidieren Relay-Sessions nach Erkennung. Die CLI bestätigt
-jedoch nur das lokale Schreiben, nicht das Einlesen oder einen konsistenten
-Commit. Es gibt keine signierte Lease, keinen Rollback-Schutz und keinen
-nachgewiesenen zeitgebundenen Widerruf. Der Client begrenzt etablierte
-Peer-Sessions über eine lokale I/O-Frist auf das früheste Ablaufdatum der
-verwendeten Geräte-, Controller- und CA-Zertifikate. Ein zusätzlicher Check
-verhindert die Übergabe bereits im TLS-Buffer liegender Daten nach lokal
-erkanntem Ablauf. Das schützt nicht vor
-manipulierten Clients und ist bei falscher Uhr, Zeitsprüngen oder Suspend kein
-Nachweis einer realzeitlichen Grenze; das Relay erzwingt sie nicht selbst.
-Die bestehende Implementierung darf deshalb nicht als Grundlage für eine
-Fünf-Minuten-Zusicherung ausgegeben werden.
+A watcher reads the state file about every second; clients poll periodically
+and close their tunnel on fetch errors. Changes and broken state invalidate
+relay sessions after detection. The CLI, however, only confirms the local
+write, not the load or a consistent commit. There is no signed lease, no
+rollback protection and no proven time-bound revocation. The client limits
+established peer sessions with a local I/O deadline at the earliest expiry of
+the device, controller and CA certificates used. An additional check prevents
+delivery of data already in the TLS buffer after locally detected expiry. This
+does not protect against tampered clients and, with a wrong clock, time jumps
+or suspend, is not proof of a real-time bound; the relay does not enforce it
+itself. The existing implementation must therefore not be presented as the
+basis for a five-minute assurance.
 
-## Produktionsvertrag: Identität, Policy und Netze
+## Production contract: identity, policy and networks
 
-- Jedes Gerät erzeugt und schützt seinen privaten Schlüssel lokal; ein
-  Enrollment-Nachweis ist kurzlebig, einmal verwendbar und an Schlüsselbesitz,
-  Geräteidentität und Freigabe gebunden. Schlüsselwechsel und Widerruf sind
-  explizite, auditierte Vorgänge.
-- Eine Netzkennung ist unabhängig von IP-Adressen. Konfiguration, Schlüssel,
-  Sessions und Policies binden sie kryptografisch; identische Adressen in
-  verschiedenen Netzen dürfen weder Autorisierung noch Routing vermischen.
-- Default-Deny gilt am empfangenden Gerät sowie bei jedem Gateway/Exit. Eine
-  Regel bindet mindestens Netz, Quelle, Ziel, Richtung, Protokoll und Port.
-  Priorität, Gruppenauflösung, Fragmentierung, ICMP und Rückverkehr müssen vor
-  der Implementierung verbindlich spezifiziert werden. Fehlende, mehrdeutige
-  oder unverifizierbare Regeln führen nicht zu Allow-All.
-- Ein authentifizierter Transport bindet beide Geräteidentitäten und die
-  Netzkennung. Direkt- und Relay-Pfad erhalten dieselbe Autorisierung und
-  erfüllen denselben Widerruf; ein erfolgreicher Handshake allein ist keine
-  dauerhafte Berechtigung.
-- Konfigurationen und Autorisierungen sind versioniert, signiert und an
-  Aussteller, Gerät, Netz und Gültigkeit gebunden. Ein gespeicherter
-  Rollback-Schutz darf nicht durch Neustart oder Wiederherstellung älterer
-  Backups unbemerkt aufgehoben werden. Schlüsselerneuerung und Notfallrotation
-  benötigen einen gesonderten, überprüfbaren Vertrauensübergang.
+- Every device generates and protects its private key locally; an enrollment
+  proof is short-lived, single-use and bound to key possession, device
+  identity and approval. Key rotation and revocation are explicit, audited
+  operations.
+- A network identifier is independent of IP addresses. Configuration, keys,
+  sessions and policies bind it cryptographically; identical addresses in
+  different networks must mix neither authorization nor routing.
+- Default deny applies at the receiving device and at every gateway/exit. A
+  rule binds at least network, source, destination, direction, protocol and
+  port. Priority, group resolution, fragmentation, ICMP and return traffic must
+  be specified bindingly before implementation. Missing, ambiguous or
+  unverifiable rules do not lead to allow-all.
+- An authenticated transport binds both device identities and the network
+  identifier. Direct and relay paths receive the same authorization and meet
+  the same revocation; a successful handshake alone is not a permanent
+  entitlement.
+- Configurations and authorizations are versioned, signed and bound to issuer,
+  device, network and validity. A stored rollback protection must not be
+  silently undone by restart or restoration of older backups. Key renewal and
+  emergency rotation need a separate, verifiable trust transition.
 
-Diese Anforderungen sind noch kein implementiertes Nachrichtenformat oder
-komplettes Policy-Modell. Ein kryptografisches Design muss insbesondere
-Kanonisierung, Algorithmusbindung, Schlüsselverteilung, Replay-Schutz und
-Versionsmigration definieren und unabhängig geprüft werden.
+These requirements are not yet an implemented message format or a complete
+policy model. A cryptographic design must in particular define
+canonicalization, algorithm binding, key distribution, replay protection and
+version migration, and be reviewed independently.
 
-## Widerruf und Zeit: verbindliche Nachweisbedingungen
+## Revocation and time: binding proof conditions
 
-Ein Widerruf gilt erst nach dauerhaftem, quorum-bestätigtem Commit als
-bestätigt. Ab diesem Zeitpunkt dürfen korrekte Empfänger und Gateways nach
-spätestens 300 Sekunden keine Pakete des widerrufenen Geräts mehr akzeptieren,
-auch wenn sie den Controller nicht mehr erreichen. Dies gilt für bestehende und
-neue Sessions, direkte und Relay-Pfade sowie Gateway- und Exit-Verkehr.
+A revocation counts as confirmed only after a durable, quorum-confirmed
+commit. From that point on, correct receivers and gateways must accept no
+packets from the revoked device after at most 300 seconds, even if they can no
+longer reach the controller. This applies to existing and new sessions,
+direct and relay paths, and gateway and exit traffic.
 
-Ein möglicher Mechanismus sind kurzlebige signierte Autorisierungsleases,
-ergänzt durch sofortige Online-Invalidierung. Dafür müssen mindestens folgende
-Eigenschaften nachgewiesen werden:
+One possible mechanism is short-lived signed authorization leases,
+complemented by immediate online invalidation. At least the following
+properties must be proven for that:
 
-1. Nach dem Commit darf kein Quorum eine das alte Recht verlängernde Lease
-   ausstellen. Vorher ausgestellte und verspätet gelieferte Leases sind beim
-   Worst-Case-Budget zu berücksichtigen; eine fehlende Quorum-Mehrheit darf
-   keinen Erfolg vortäuschen und keine neuen Rechte verlängern.
-2. Akzeptanz ist auch für bereits etablierte Sessions bis zum verifizierten
-   Ablauf begrenzt. Eine Nachricht mit altem Stand darf weder nach Widerruf
-   noch nach Reboot oder Snapshot-Rollback eine spätere Frist herstellen.
-3. Die Summe aus maximaler Restgültigkeit vor Commit, zulässigem Zeitfehler
-   und allen weiteren nachweisbaren Verzögerungen bis zur letzten akzeptierten
-   Paketverarbeitung darf 300 Sekunden nicht überschreiten. Die genaue
-   Herleitung hängt von Ausstellungs- und Uhrmodell ab; dafür wird hier kein
-   unvalidierter Zahlenwert festgelegt.
-4. Zeitrücksprung, eingefrorene Uhr, Verlust geschützten Zustands und nicht
-   nachweisbare Uhrgenauigkeit müssen erkannt werden oder die Autorisierung
-   fail-closed beenden. Eine monotone Uhr allein übersteht nicht zwangsläufig
-   Neustart oder VM-Snapshot; für jede Plattform ist ein tragfähiges Modell
-   und dessen Fehlerverhalten zu belegen.
-5. Tests messen vom bestätigten Commit bis zum **letzten akzeptierten Paket**,
-   nicht nur bis zum Schließen einer Verbindung. Sie umfassen Partition,
-   verspätete Nachrichten, Replay, Uhrfehler, Neustart, Snapshot-Rollback,
-   Leader-Wechsel und Relay-Failover für alle unterstützten Pfade.
+1. After the commit, no quorum may issue a lease extending the old right.
+   Leases issued earlier and delivered late must be included in the
+   worst-case budget; a missing quorum majority must neither fake success nor
+   extend new rights.
+2. Acceptance is limited to the verified expiry also for already established
+   sessions. A message with an old state must not establish a later deadline
+   after revocation, reboot or snapshot rollback.
+3. The sum of maximum remaining validity before commit, permissible clock
+   error and all further provable delays until the last accepted packet
+   processing must not exceed 300 seconds. The exact derivation depends on
+   issuance and clock model; no unvalidated number is fixed here.
+4. Clock regression, frozen clock, loss of protected state and unprovable
+   clock accuracy must be detected or end authorization fail-closed. A
+   monotonic clock alone does not necessarily survive restart or VM snapshot;
+   a viable model and its failure behaviour must be demonstrated for every
+   platform.
+5. Tests measure from the confirmed commit to the **last accepted packet**,
+   not only to the closing of a connection. They cover partition, delayed
+   messages, replay, clock errors, restart, snapshot rollback, leader change
+   and relay failover for all supported paths.
 
-Ohne vertrauenswürdige Zeit- und Rollback-Annahmen lässt sich unter beliebig
-langen Partitionen nicht gleichzeitig unbegrenzte Offline-Verfügbarkeit und
-eine feste reale Widerrufsfrist garantieren. Die Produktanforderung entscheidet
-sich im Zweifel für fail-closed und damit Verfügbarkeitsverlust.
+Without trustworthy time and rollback assumptions, unlimited offline
+availability and a fixed real revocation deadline cannot be guaranteed at the
+same time under arbitrarily long partitions. In doubt, the product requirement
+decides for fail-closed and thus loss of availability.
 
-## Datenschutz und Betrieb
+## Privacy and operation
 
-Voraussichtlich fallen Gerätekennungen, öffentliche Schlüssel, Netzzuordnung,
-Administrationsereignisse, Verbindungszeitpunkte, Endpunktadressen und
-Fehlerdaten an. Protokolle sollen weder Nutzdaten noch private Schlüssel oder
-Enrollment-Nachweise enthalten. Zweck, Rechtsgrundlage, Zugriff, Speicherort,
-Aufbewahrung, Löschung einschließlich Backups und gegebenenfalls
-Auftragsverarbeitung müssen für den konkreten Betrieb festgelegt und rechtlich
-geprüft werden. Diese Aufzählung ist keine DSGVO-Freigabe.
+Expected data: device identifiers, public keys, network assignment,
+administration events, connection times, endpoint addresses and error data.
+Logs should contain neither payload nor private keys nor enrollment proofs.
+Purpose, legal basis, access, storage location, retention, deletion including
+backups and, where applicable, data processing agreements must be defined for
+the concrete deployment and reviewed legally. This list is not a GDPR
+approval.
 
-Vor Produktion sind außerdem nachvollziehbare Rollen, revisionsfähige
-Administration, getestetes Backup/Restore, Schlüsselkompromittierungsverfahren,
-Missbrauchsbegrenzung, Datenschutzfreigabe und unabhängige Sicherheitsprüfung
-erforderlich. SLOs und die Infrastruktur müssen anhand von Messungen festgelegt
-werden. Eine ISO-27001-Zertifizierung ist nicht Bestandteil des Projektziels.
+Before production, traceable roles, auditable administration, tested
+backup/restore, key compromise procedures, abuse limiting, privacy approval and
+an independent security review are also required. SLOs and infrastructure must
+be defined based on measurements. ISO 27001 certification is not part of the
+project goal.
+
+On load, the controller checks its key pairs, the valid server certificate matching the configured host, and the signature of the registered devices by its own CA. An invalid state closes the relay after detection. The check does not protect against an attacker with access to a valid CA key and controller state. `add-peer` synchronizes the credential file before the state change; both writes are still not transactional.
+
+State files are synchronized before the atomic rename; the parent directory is synchronized afterwards. Newly created output and controller directory entries are synchronized as well. If synchronization fails after creation or replacement, the CLI explicitly reports an uncertain state: the change may already be visible and must be checked before retrying. This requires a file system with a working `fsync` and offers neither quorum nor atomic multi-file transactions nor rollback protection.
+
+With `renew-server` the administrator can also replace an already expired server certificate under a still valid CA; the server key is regenerated and the lifetime limited by the CA. A running controller closes on detected identity change and must be restarted. This renews neither devices nor the CA and is not a highly available rotation.
+
+For offline revocation, `remove-peer` may load an otherwise verified state with an expired server certificate; the service itself must not use it. The CA must still be valid. The file write confirms neither adoption by controller and clients nor compliance with a revocation deadline.
+
+`rotate-peer` replaces the device certificate based on an independently verified offline request with a new local key. Addresses and policy are preserved; after asynchronous adoption the old identity is no longer accepted. Since there is no transaction between certificate issuance and state, no secure rollback and no guaranteed deadline, this is not a production rotation.
+
+A bounded history of public device key fingerprints prevents their re-authorization via current CLI commands, even after removal and with different requests. Migration only captures keys still present; older backups or manual edits can reset the history. This is neither tamper-proof rollback protection nor time-limited single-use enrollment.
