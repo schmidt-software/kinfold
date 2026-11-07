@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/netip"
 	"sync"
@@ -126,7 +126,7 @@ func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID strin
 		}
 		packet := buf[:n]
 		if len(packet) > tunnelMTU {
-			log.Printf("tunnel packet exceeds MTU: %d bytes; packet dropped", len(packet))
+			slog.Debug("packet exceeds tunnel MTU; dropped", "size", len(packet), "mtu", tunnelMTU)
 			continue
 		}
 		src, dst, err := packetAddresses(packet)
@@ -141,7 +141,7 @@ func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID strin
 		select {
 		case l.queue <- clone:
 		default:
-			log.Printf("queue full for peer %s; packet dropped", l.peer.ID)
+			slog.Debug("peer queue full; packet dropped", "peer", l.peer.ID)
 		}
 	}
 }
@@ -152,10 +152,10 @@ func (l *link) run(ctx context.Context, cred core.Credential, cfg core.Config, o
 		conn, err := Connect(ctx, cred, cfg, ownID, l.peer)
 		if err != nil {
 			if ctx.Err() == nil {
-				log.Printf("peer %s: %v", l.peer.ID, err)
+				slog.Warn("peer connection failed", "peer", l.peer.ID, "error", err)
 			}
 		} else {
-			log.Printf("peer %s connected through relay", l.peer.ID)
+			slog.Info("peer connected through relay", "peer", l.peer.ID)
 			l.connected.Store(true)
 			started := time.Now()
 			err = l.session(ctx, conn, localIP, device, writeMu)
@@ -172,7 +172,7 @@ func (l *link) run(ctx context.Context, cred core.Credential, cfg core.Config, o
 				return fmt.Errorf("peer %s: %w", l.peer.ID, writeErr)
 			}
 			if ctx.Err() == nil {
-				log.Printf("peer %s disconnected: %v", l.peer.ID, err)
+				slog.Warn("peer disconnected", "peer", l.peer.ID, "error", err)
 			}
 		}
 		delay := backoff.next()

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -600,10 +601,14 @@ func Run(args []string) error {
 		f := flags("serve")
 		dir := f.String("data", "controller-data", "controller data directory")
 		listen := f.String("listen", ":8443", "TCP listen address")
+		logging := addLogFlags(f)
 		if err := f.Parse(args[1:]); err != nil {
 			return err
 		}
 		if err := noArgs(f); err != nil {
+			return err
+		}
+		if err := logging.configure(); err != nil {
 			return err
 		}
 		s, err := core.LoadState(*dir)
@@ -611,7 +616,7 @@ func Run(args []string) error {
 			return err
 		}
 		if s.Config.Policy == nil {
-			fmt.Fprintln(os.Stderr, "WARNING: legacy network allows all peer traffic; use policy-enable to opt into default-deny.")
+			slog.Warn("legacy network allows all peer traffic; use policy-enable to opt into default-deny")
 		}
 		handler, err := relay.New(s.Config)
 		if err != nil {
@@ -632,7 +637,7 @@ func Run(args []string) error {
 		server := &http.Server{Handler: handler, TLSConfig: tlsCfg, ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 16 << 10}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		fmt.Printf("Controller listening on %s\n", ln.Addr())
+		slog.Info("controller listening", "address", ln.Addr().String(), "build", readBuildInfo().short(), "peers", len(s.Config.Peers))
 		return serveController(ctx, server, ln, handler, func(ctx context.Context) {
 			handler.Watch(ctx.Done(), s, func() (*core.State, error) { return core.LoadState(*dir) }, time.Second)
 		}, 5*time.Second)
@@ -640,6 +645,7 @@ func Run(args []string) error {
 		f := flags(args[0])
 		path := f.String("credential", "", "private peer credential file")
 		iface := f.String("interface", "kf0", "new Linux TUN interface name")
+		logging := addLogFlags(f)
 		if err := f.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -648,6 +654,11 @@ func Run(args []string) error {
 		}
 		if *path == "" {
 			return fmt.Errorf("-credential is required")
+		}
+		if args[0] == "run" {
+			if err := logging.configure(); err != nil {
+				return err
+			}
 		}
 		var cred core.Credential
 		if err := core.ReadJSON(*path, &cred); err != nil {
@@ -665,7 +676,11 @@ func Run(args []string) error {
 			fmt.Printf("IPv6 network %s, local address %s\n", cfg.Network6, self.IPv6)
 		}
 		if cfg.Policy == nil {
-			fmt.Fprintln(os.Stderr, "WARNING: legacy network allows all peer traffic; default-deny is not enabled.")
+			if args[0] == "run" {
+				slog.Warn("legacy network allows all peer traffic; default-deny is not enabled")
+			} else {
+				fmt.Fprintln(os.Stderr, "WARNING: legacy network allows all peer traffic; default-deny is not enabled.")
+			}
 		} else {
 			fmt.Printf("Static default-deny policy: %d directional allow rules\n", len(cfg.Policy.Allowed))
 			if cfg.Policy.Services != nil {
@@ -682,6 +697,7 @@ func Run(args []string) error {
 			}
 			return nil
 		}
+		slog.Info("client starting", "peer", id, "build", readBuildInfo().short())
 		return runSupervised(ctx, cred, cfg, id, *iface)
 	case "version":
 		f := flags("version")

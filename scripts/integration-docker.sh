@@ -84,8 +84,8 @@ if docker exec "$alice" ping -c 2 -W 1 10.77.0.3 >/dev/null 2>&1 ||
   echo "Default-deny policy failed" >&2
   exit 1
 fi
-if docker logs "$alice" 2>&1 | grep -q 'peer charlie connected through relay' ||
-   docker logs "$charlie" 2>&1 | grep -q 'peer alice connected through relay'; then
+if docker logs "$alice" 2>&1 | grep -q 'msg="peer connected through relay" peer=charlie' ||
+   docker logs "$charlie" 2>&1 | grep -q 'msg="peer connected through relay" peer=alice'; then
   echo "Unauthorized peers established a relay connection" >&2
   exit 1
 fi

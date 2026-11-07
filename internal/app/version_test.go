@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -42,5 +43,29 @@ func TestVersionCommandPrintsVersion(t *testing.T) {
 	}
 	if err := Run([]string{"version", "extra"}); err == nil {
 		t.Fatal("version accepted unexpected argument")
+	}
+}
+
+func TestNewLogHandlerLevelsAndFormats(t *testing.T) {
+	var out bytes.Buffer
+	h, err := newLogHandler(&out, "json", "warn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(h)
+	logger.Info("hidden")
+	logger.Warn("shown", "peer", "alice")
+	got := out.String()
+	if strings.Contains(got, "hidden") || !strings.Contains(got, `"peer":"alice"`) {
+		t.Errorf("unexpected JSON log output: %s", got)
+	}
+	if _, err := newLogHandler(&out, "xml", "info"); err == nil {
+		t.Error("unknown format accepted")
+	}
+	if _, err := newLogHandler(&out, "text", "loud"); err == nil {
+		t.Error("unknown level accepted")
+	}
+	if _, err := newLogHandler(&out, "text", "debug"); err != nil {
+		t.Errorf("text/debug rejected: %v", err)
 	}
 }

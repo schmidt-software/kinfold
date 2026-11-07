@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"reflect"
@@ -119,11 +119,11 @@ func (s *Server) Watch(done <-chan struct{}, initial *core.State, load func() (*
 			}
 			if err = s.Update(cfg, err); err != nil {
 				if !failed {
-					log.Printf("controller configuration unavailable; relay closed: %v", err)
+					slog.Error("controller configuration unavailable; relay closed", "error", err)
 				}
 				failed = true
 			} else if failed {
-				log.Print("controller configuration restored")
+				slog.Info("controller configuration restored")
 				failed = false
 			}
 		}
@@ -177,7 +177,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/config":
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(config); err != nil {
-			log.Printf("config response: %v", err)
+			slog.Warn("config response failed", "error", err)
 		}
 	case r.Method == http.MethodConnect && r.URL.Path == "/relay":
 		target := r.URL.Query().Get("peer")
@@ -235,7 +235,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	conn, rw, err := hijacker.Hijack()
 	if err != nil {
 		s.mu.Unlock()
-		log.Printf("relay hijack: %v", err)
+		slog.Warn("relay hijack failed", "error", err)
 		return
 	}
 	if rw.Reader.Buffered() != 0 {
@@ -252,7 +252,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		}
 	}()
 	if err = conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		log.Printf("relay response deadline: %v", err)
+		slog.Warn("relay response deadline failed", "error", err)
 		return
 	}
 	if _, err = rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
@@ -262,7 +262,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		return
 	}
 	if err = conn.SetWriteDeadline(time.Time{}); err != nil {
-		log.Printf("clear relay response deadline: %v", err)
+		slog.Warn("clearing relay response deadline failed", "error", err)
 		return
 	}
 	s.mu.Lock()

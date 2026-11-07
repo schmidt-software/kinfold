@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"time"
@@ -87,7 +87,7 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 			}
 			done <- err
 		}()
-		log.Printf("interface %s active for %s (%v)", iface, id, addresses)
+		slog.Info("tunnel active", "interface", iface, "peer", id, "addresses", addresses)
 		return nil
 	}
 	if err := start(initial, initialID); err != nil {
@@ -141,7 +141,7 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 					return stopErr
 				}
 				if !unavailable {
-					log.Printf("controller refresh failed; tunnel closed: %v", err)
+					slog.Warn("controller refresh failed; tunnel closed", "error", err)
 				}
 				unavailable = true
 				continue
