@@ -87,6 +87,8 @@ func (s *Server) Update(config core.Config, err error) error {
 	if err == nil {
 		revision, members, err = derive(config)
 	}
+	var stale []net.Conn
+	defer func() { forceClose(stale...) }()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -94,40 +96,55 @@ func (s *Server) Update(config core.Config, err error) error {
 	}
 	if err != nil {
 		if s.available {
-			s.invalidate()
+			stale = s.invalidate()
 		}
 		s.available = false
 		return err
 	}
 	if !s.available || s.revision != revision {
-		s.invalidate()
+		stale = s.invalidate()
 		s.config, s.revision, s.members = config, revision, members
 	}
 	s.available = true
 	return nil
 }
 
-// Caller holds s.mu.
-func (s *Server) invalidate() {
+// invalidate ends all pairings and returns the connections the caller must
+// close with forceClose after releasing s.mu. Caller holds s.mu.
+func (s *Server) invalidate() []net.Conn {
 	s.generation++
 	for _, p := range s.waiting {
 		close(p.cancel)
 	}
 	s.waiting = make(map[string]*pending)
+	stale := make([]net.Conn, 0, len(s.active))
 	for conn := range s.active {
-		// Avoid blocking a configuration update on TLS close notifications.
-		_ = conn.SetDeadline(time.Now())
-		conn.Close()
+		stale = append(stale, conn)
 	}
 	s.active = make(map[net.Conn]endpoint)
+	return stale
+}
+
+// forceClose tears connections down without a TLS close_notify. Closing a
+// *tls.Conn writes close_notify with its own 5 s deadline, which a peer that
+// stops reading can exhaust (review R-05); the relay never needs a graceful
+// TLS shutdown for a session it revokes.
+func forceClose(conns ...net.Conn) {
+	for _, conn := range conns {
+		if tc, ok := conn.(interface{ NetConn() net.Conn }); ok {
+			tc.NetConn().Close()
+		}
+		conn.Close()
+	}
 }
 
 func (s *Server) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.available = false
 	s.closed = true
-	s.invalidate()
+	stale := s.invalidate()
+	s.mu.Unlock()
+	forceClose(stale...)
 }
 
 // Watch periodically reloads configuration. PKI changes require a full restart.
