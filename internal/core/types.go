@@ -156,10 +156,11 @@ func (c Config) Validate() error {
 }
 
 // Permits reports whether the static, directional member rule allows a packet.
-// A missing policy is the legacy configuration format.
+// A configuration without a policy (pre-policy state format) denies all
+// traffic; missing rules never mean allow-all (review C-01).
 func (c Config) Permits(from, to string) bool {
 	if c.Policy == nil {
-		return true
+		return false
 	}
 	for _, rule := range c.Policy.Allowed {
 		if rule.From == from && rule.To == to {
@@ -171,7 +172,7 @@ func (c Config) Permits(from, to string) bool {
 
 func (c *Config) SetRule(from, to string, allow bool) error {
 	if c.Policy == nil {
-		return errors.New("legacy configuration: enable default-deny policy first")
+		return errors.New("configuration has no policy: run policy-enable first")
 	}
 	if _, ok := c.Peer(from); !ok {
 		return fmt.Errorf("unknown peer %q", from)

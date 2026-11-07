@@ -97,10 +97,10 @@ func TestDirectionalPolicy(t *testing.T) {
 		t.Fatal("removed rule still allows traffic")
 	}
 	s.Config.Policy = nil
-	if !s.Config.Permits("alice", "bob") {
-		t.Fatal("legacy behavior changed")
+	if s.Config.Permits("alice", "bob") {
+		t.Fatal("configuration without policy must deny all traffic")
 	}
 	if err := s.Config.SetRule("alice", "bob", true); err == nil {
-		t.Fatal("modified legacy policy")
+		t.Fatal("modified configuration without policy")
 	}
 }
