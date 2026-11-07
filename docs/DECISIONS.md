@@ -54,13 +54,13 @@ A bounded history of public device key fingerprints prevents their re-authorizat
 
 ## 5. Packet mapping and restrictions
 
-**Decision:** Outgoing packets are mapped to a peer solely by the exactly assigned IPv4 or IPv6 destination address. Incoming packets must carry the source assigned to the authenticated peer and the own address as destination. New networks additionally use static directional default-deny rules; old networks keep allow-all until the administrator enables the policy.
+**Decision:** Outgoing packets are mapped to a peer solely by the exactly assigned IPv4 or IPv6 destination address. Incoming packets must carry the source assigned to the authenticated peer and the own address as destination. Networks additionally use static directional default-deny rules; a configuration without a policy denies all traffic (see DECISION-LOG D-012).
 
 **Rationale:** This keeps the first tunnel simple to test and offers basic protection against address spoofing.
 
-**Consequences:** No forwarding of foreign prefixes, no broadcasts or granular port rules. A reply needs its own rule. Old clients ignore policies; the relay rejects them when a policy is enabled because of the missing configuration hash, which however guarantees no protection against tampered clients. Updates happen asynchronously and without a binding revocation guarantee. Operating system firewalls remain necessary.
+**Consequences:** No forwarding of foreign prefixes, no broadcasts or granular port rules. A reply needs its own rule. Old clients ignore policies; the relay rejects them because of the missing configuration hash, which however guarantees no protection against tampered clients. Updates happen asynchronously and without a binding revocation guarantee. Operating system firewalls remain necessary.
 
-A device pair without a rule in any direction gets no relay session; current clients skip such connection attempts. A one-directional rule allows establishing the shared connection, not traffic in both directions. Old configurations without a policy keep allow-all.
+A device pair without a rule in any direction gets no relay session; current clients skip such connection attempts. A one-directional rule allows establishing the shared connection, not traffic in both directions.
 
 Optionally, an additional experimental service policy can be enabled. It is default deny, requires existing directional device rules and allows TCP/UDP by exact destination port or all ICMP/ICMPv6 types. Both endpoints check independently. IPv4 options and fragments as well as IPv6 extension headers and fragments are rejected when the service policy is enabled; other traffic likewise. Rules are stateless, there is no automatic reply rule, and ICMP errors are not associated with a connection. TCP replies to variable client ports are therefore awkward to use. Changes invalidate sessions after asynchronous reload; old strict decoders do not accept the new fields. Not a production-grade firewall replacement.
 
