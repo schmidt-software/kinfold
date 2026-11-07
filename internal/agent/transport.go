@@ -36,14 +36,54 @@ func outerTLS(c core.Credential) (*tls.Config, error) {
 	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}, RootCAs: roots, NextProtos: []string{"http/1.1"}}, nil
 }
 
-func FetchConfig(ctx context.Context, cred core.Credential) (core.Config, string, error) {
+// ConfigClient fetches the configuration over one reusable mutual-TLS
+// connection instead of a new handshake per poll (review A-04).
+type ConfigClient struct {
+	cred      core.Credential
+	transport *http.Transport
+	client    *http.Client
+	err       error
+}
+
+func NewConfigClient(cred core.Credential) *ConfigClient {
 	tlsCfg, err := outerTLS(cred)
 	if err != nil {
-		return core.Config{}, "", err
+		return &ConfigClient{cred: cred, err: err}
 	}
-	transport := &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: false, MaxResponseHeaderBytes: maxControllerResponseHeaderBytes}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+	transport := &http.Transport{
+		TLSClientConfig:        tlsCfg,
+		ForceAttemptHTTP2:      false,
+		MaxResponseHeaderBytes: maxControllerResponseHeaderBytes,
+		MaxIdleConns:           1,
+		MaxIdleConnsPerHost:    1,
+		IdleConnTimeout:        30 * time.Second,
+		DialContext:            (&net.Dialer{Timeout: 10 * time.Second, KeepAliveConfig: clientKeepAlive}).DialContext,
+	}
+	return &ConfigClient{cred: cred, transport: transport, client: &http.Client{Transport: transport, Timeout: 10 * time.Second}}
+}
+
+// Close releases the idle connection.
+func (c *ConfigClient) Close() {
+	if c.transport != nil {
+		c.transport.CloseIdleConnections()
+	}
+}
+
+// FetchConfig performs a single fetch on a fresh connection.
+func FetchConfig(ctx context.Context, cred core.Credential) (core.Config, string, error) {
+	c := NewConfigClient(cred)
+	defer c.Close()
+	return c.Fetch(ctx)
+}
+
+// Fetch retrieves and validates the configuration and returns the local
+// peer ID that the credential's certificate belongs to.
+func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
+	if c.err != nil {
+		return core.Config{}, "", c.err
+	}
+	cred, client := c.cred, c.client
+	tlsCfg := c.transport.TLSClientConfig
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+cred.Server+"/config", nil)
 	if err != nil {
 		return core.Config{}, "", err

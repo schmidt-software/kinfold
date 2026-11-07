@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -113,5 +114,27 @@ func TestFetchConfigRejectsDeviceCertificateAsController(t *testing.T) {
 	defer cancel()
 	if _, _, err := FetchConfig(ctx, alice); err == nil || !strings.Contains(err.Error(), "certificate") {
 		t.Fatalf("device certificate accepted as controller: %v", err)
+	}
+}
+
+func TestConfigClientReusesConnection(t *testing.T) {
+	_, alice, _ := setup(t)
+	var dials atomic.Int32
+	c := NewConfigClient(alice)
+	defer c.Close()
+	base := c.transport.DialContext
+	c.transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dials.Add(1)
+		return base(ctx, network, addr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for i := 0; i < 3; i++ {
+		if _, id, err := c.Fetch(ctx); err != nil || id != "alice" {
+			t.Fatalf("fetch %d: id=%q err=%v", i, id, err)
+		}
+	}
+	if n := dials.Load(); n != 1 {
+		t.Fatalf("three fetches used %d connections, want 1", n)
 	}
 }
