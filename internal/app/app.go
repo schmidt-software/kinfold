@@ -45,6 +45,7 @@ Commands:
   status       Show the authorized network configuration
   check-config Compare the on-disk and loaded controller configuration
   run          Run the Linux TUN client
+  version      Show build information
 
 Run a command with -h for its options.
 `
@@ -682,6 +683,16 @@ func Run(args []string) error {
 			return nil
 		}
 		return runSupervised(ctx, cred, cfg, id, *iface)
+	case "version":
+		f := flags("version")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		printVersion(os.Stdout, readBuildInfo())
+		return nil
 	default:
 		return fmt.Errorf("unknown command %q; run 'kinfold help'", args[0])
 	}
