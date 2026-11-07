@@ -3,6 +3,8 @@ package relay
 import (
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -49,5 +51,13 @@ func TestUpdateInvalidatesAndFailsClosed(t *testing.T) {
 	s.Close()
 	if err := s.Update(cfg, nil); err == nil || s.available {
 		t.Fatal("closed relay was reopened")
+	}
+}
+
+func TestRejectClosesConnection(t *testing.T) {
+	rec := httptest.NewRecorder()
+	reject(rec, "not authorized", http.StatusForbidden)
+	if rec.Code != http.StatusForbidden || rec.Header().Get("Connection") != "close" {
+		t.Fatalf("status %d, Connection %q", rec.Code, rec.Header().Get("Connection"))
 	}
 }

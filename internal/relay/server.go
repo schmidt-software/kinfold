@@ -165,12 +165,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	config, available, generation := s.config, s.available, s.generation
 	s.mu.Unlock()
 	if !available {
-		http.Error(w, "configuration unavailable", http.StatusServiceUnavailable)
+		reject(w, "configuration unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	id, ok := identity(r, config)
 	if !ok {
-		http.Error(w, "not authorized", http.StatusForbidden)
+		reject(w, "not authorized", http.StatusForbidden)
 		return
 	}
 	switch {
@@ -182,13 +182,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodConnect && r.URL.Path == "/relay":
 		target := r.URL.Query().Get("peer")
 		if _, ok := config.Peer(target); !ok || id == target {
-			http.Error(w, "invalid target", http.StatusBadRequest)
+			reject(w, "invalid target", http.StatusBadRequest)
 			return
 		}
 		s.connect(w, r, id, target, generation)
 	default:
-		http.NotFound(w, r)
+		reject(w, "not found", http.StatusNotFound)
 	}
+}
+
+// reject answers with an error and closes the connection afterwards. A
+// rejected client (unknown, removed or misbehaving) must not keep an idle
+// keep-alive connection and with it a listener slot (review R-01).
+func reject(w http.ResponseWriter, message string, status int) {
+	w.Header().Set("Connection", "close")
+	http.Error(w, message, status)
 }
 
 func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string, generation uint64) {
@@ -197,25 +205,25 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	s.mu.Lock()
 	if !s.available || s.generation != generation {
 		s.mu.Unlock()
-		http.Error(w, "configuration changed", http.StatusServiceUnavailable)
+		reject(w, "configuration changed", http.StatusServiceUnavailable)
 		return
 	}
 	if s.config.Policy != nil {
 		revision, err := s.config.Revision()
 		if err != nil || r.Header.Get("X-Kinfold-Config-Revision") != revision {
 			s.mu.Unlock()
-			http.Error(w, "current policy configuration required", http.StatusConflict)
+			reject(w, "current policy configuration required", http.StatusConflict)
 			return
 		}
 		if !s.config.Permits(from, to) && !s.config.Permits(to, from) {
 			s.mu.Unlock()
-			http.Error(w, "peer pair not authorized", http.StatusForbidden)
+			reject(w, "peer pair not authorized", http.StatusForbidden)
 			return
 		}
 	}
 	if s.waiting[key] != nil {
 		s.mu.Unlock()
-		http.Error(w, "relay busy", http.StatusConflict)
+		reject(w, "relay busy", http.StatusConflict)
 		return
 	}
 	if status := s.admissionStatus(from, to); status != 0 {
@@ -223,13 +231,13 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		if status == http.StatusTooManyRequests {
 			w.Header().Set("Retry-After", "2")
 		}
-		http.Error(w, "relay connection limit reached", status)
+		reject(w, "relay connection limit reached", status)
 		return
 	}
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		s.mu.Unlock()
-		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+		reject(w, "hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 	conn, rw, err := hijacker.Hijack()
