@@ -39,7 +39,8 @@ receiver check the respective direction and exact peer addresses. An optional
 experimental additional filter checks protocol and exact destination ports,
 without a stateful return-traffic rule; fragmentation and IP extensions are
 dropped there. ICMP rules cover all types. A tampered device can bypass its own
-checks. Legacy configurations without a policy still allow traffic. The relay
+checks. A configuration without a policy section denies all traffic, and the
+controller refuses to serve it. The relay
 configuration hash is not proof of unmodified client software. The relay
 rejects device pairs without a rule in either direction; as soon as at least
 one direction is allowed, it cannot filter the encrypted stream by direction or

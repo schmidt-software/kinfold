@@ -213,3 +213,21 @@ streams are unaffected because `Hijack` clears all deadlines.
 **Consequences:** More than two devices behind one public address need a
 higher `-max-conns-per-ip`. A distributed attacker can still exhaust the
 global limit; that is accepted for alpha and documented.
+
+## D-012 — 2026-11-08 — active — No allow-all without a policy
+
+**Decision:** A configuration without a `policy` section denies all peer
+traffic (`Config.Permits` returns false), the relay always requires the
+configuration revision header, and `serve` refuses to start on such a state
+with an instruction to run `policy-enable`. The prototype's legacy
+allow-all behaviour is removed.
+
+**Rationale:** Review finding C-01. Restoring a pre-policy backup or deleting
+the section by hand silently turned the network into allow-all and disabled
+the relay's revision check, contradicting the security model ("missing rules
+never lead to allow-all"). Kinfold has no deployments that depend on the old
+format; the rename (D-001) already requires updating all nodes together.
+
+**Consequences:** Operators of a pre-policy state must run `policy-enable`
+and add rules once. Clients that receive a policy-less configuration from an
+old controller keep running but forward nothing and log a warning.

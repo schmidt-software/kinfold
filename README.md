@@ -144,7 +144,7 @@ When reading them, the CLI limits requests, private keys and certificate files t
 
 File and directory entry are synchronized; this requires a file system with a working `fsync`. If synchronization fails after the write, the change may already be visible but its durability is uncertain. Check state and output files before retrying. Multiple files are not written as a transaction.
 
-New networks use a default-deny policy. Without the optional service filter, `allow -from alice -to bob` permits all IPv4 and IPv6 packets from Alice to Bob; reply packets need the reverse rule. `deny` removes a rule. The basic policy applies on sender and receiver but is not a stateful firewall and does not filter ports or protocols itself. Existing networks without a policy keep their previous allow-all behaviour for compatibility and print a warning. `policy-enable -data controller-data` enables default-deny for such a network; the desired rules must be set afterwards.
+New networks use a default-deny policy. Without the optional service filter, `allow -from alice -to bob` permits all IPv4 and IPv6 packets from Alice to Bob; reply packets need the reverse rule. `deny` removes a rule. The basic policy applies on sender and receiver but is not a stateful firewall and does not filter ports or protocols itself. A state file from before policy support (no `policy` section) denies all peer traffic, and `serve` refuses to start with it until `policy-enable -data controller-data` has added an empty default-deny policy; set the desired rules afterwards. Missing rules never mean allow-all.
 
 ### Experimental service filter
 
@@ -183,7 +183,7 @@ The rules apply on current senders and receivers, not in the encrypted relay. A 
 
 An updated relay rejects sessions between two devices when no allow rule exists in either direction; current clients do not attempt such connections. A rule in only one direction is enough for the shared session but does not allow return traffic. This additional relay check does not replace the direction check on the receiver and does not limit bandwidth.
 
-**Important limit:** Older client binaries ignore the policy. With a policy enabled, the relay requires the hash of the current configuration on connection setup and rejects unmodified old clients and clients with an outdated configuration. The hash is **not** a proof of integrity for the client software: a tampered client can reproduce it. Old networks without a policy do not have this check. All participants must be updated; existing sessions are only terminated after the asynchronous reload. This policy does not yet meet the requirements for production-grade access control or time-bound revocation.
+**Important limit:** Older client binaries ignore the policy. The relay requires the hash of the current configuration on connection setup and rejects unmodified old clients and clients with an outdated configuration. The hash is **not** a proof of integrity for the client software: a tampered client can reproduce it. All participants must be updated; existing sessions are only terminated after the asynchronous reload. This policy does not yet meet the requirements for production-grade access control or time-bound revocation.
 
 ```sh
 ./kinfold remove-peer -data controller-data -id bob
