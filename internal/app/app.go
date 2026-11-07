@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -103,6 +104,8 @@ func Run(args []string) error {
 		defer lock.Close()
 		if *network == "none" {
 			s.Config.Network6 = ""
+		} else if prefix, err := netip.ParsePrefix(*network); err == nil && prefix == prefix.Masked() {
+			s.Config.Network6 = prefix.String() // canonical spelling; non-masked input is rejected by Validate
 		} else {
 			s.Config.Network6 = *network
 		}
@@ -139,6 +142,8 @@ func Run(args []string) error {
 				found = true
 				if *address == "none" {
 					s.Config.Peers[i].IPv6 = ""
+				} else if ip, err := netip.ParseAddr(*address); err == nil {
+					s.Config.Peers[i].IPv6 = ip.String()
 				} else {
 					s.Config.Peers[i].IPv6 = *address
 				}
