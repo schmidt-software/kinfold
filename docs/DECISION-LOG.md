@@ -171,3 +171,24 @@ must be explicit and reproducible, not "whatever is installed".
 **Consequences:** Builds are reproducible across machines. Every Go patch
 release requires a one-line `go.mod` change; CI makes forgetting it visible.
 Supersedes D-008.
+
+## D-010 — 2026-11-08 — active — Review disposition and issue plan
+
+**Decision:** The consolidated review (`docs/review-v0.1-copilot.md`) is
+turned into issues #7–#20 grouped by code area, so that each PR touches one
+area and carries its own tests. All high and medium findings are fixed for
+alpha. Low findings are fixed where local; C-10 (key history lost on backup
+restore) and C-13 (orphan certificate after a failed state write) are
+documented as known limits because both are consequences of the missing
+rollback protection, which needs signed state (#22). R-09/R-10 (targeted
+invalidation, per-peer config) are deferred to #20 because they change the
+revision model shared by controller and client.
+
+Order of work: security first (#7, #12), then availability (#8, #9, #10),
+then validation and hardening (#11, #13, #14), then features and operations
+(#15–#18), then the documentation pass and release (#19).
+
+**Rationale:** R-01 is the only finding that lets a removed device take the
+whole network down; it goes first. #12 removes the last fail-open path.
+Availability fixes come before new features so that the renewal feature is
+built on a stable session layer.
