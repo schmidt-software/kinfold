@@ -192,3 +192,24 @@ then validation and hardening (#11, #13, #14), then features and operations
 whole network down; it goes first. #12 removes the last fail-open path.
 Availability fixes come before new features so that the renewal feature is
 built on a stable session layer.
+## D-011 — 2026-11-08 — active — Controller connection limits and timeouts
+
+**Decision:** The controller's HTTP server sets every timeout: 5 s for the
+TLS handshake and request header, 10 s read, 15 s write, 60 s idle. Every
+error response closes the connection. Only HTTP/1.1 is offered. The
+listener limits connections globally (1,152), per source IP (64 concurrent,
+20/s with a burst of 64) and tunes TCP keepalive to 15 s + 3 × 5 s. The
+global and per-source values are `serve` flags.
+
+**Rationale:** Review finding R-01: without an idle timeout, any holder of a
+CA-signed certificate — including a removed device — could pin all slots
+forever. R-02: a 10 s handshake window let a single unauthenticated source
+saturate the controller with ~115 connections/s. The per-source values are
+derived from the mesh size: one client holds one control connection plus at
+most 31 relay connections and opens them in a burst after a controller
+restart; 64 covers two devices behind one NAT address. Hijacked relay
+streams are unaffected because `Hijack` clears all deadlines.
+
+**Consequences:** More than two devices behind one public address need a
+higher `-max-conns-per-ip`. A distributed attacker can still exhaust the
+global limit; that is accepted for alpha and documented.
