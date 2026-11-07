@@ -4,7 +4,7 @@ Stand: 2026-11-07. Die Entscheidungen beschreiben den aktuellen Prototyp, nicht 
 
 ## 1. Eigenständiges Layer-3-MVP
 
-**Entscheidung:** Ein Linux-TUN-Interface pro Gerät mit IPv4 und optional IPv6. Die Implementierung ist eigenständig und nicht mit ZeroTier kompatibel.
+**Entscheidung:** Ein Linux-TUN-Interface pro Gerät mit IPv4 und optional IPv6. Die Implementierung ist eigenständig und mit keinem anderen VPN- oder Overlay-Produkt kompatibel.
 
 **Begründung:** IP-Unicast ist deutlich kleiner als ein virtuelles Ethernet mit ARP/NDP, Broadcast, Multicast und Bridging. Das macht einen überprüfbaren ersten Meilenstein möglich.
 
@@ -26,7 +26,7 @@ Etablierte Peer-Sessions erhalten lokal eine I/O-Frist anhand des frühesten Abl
 
 **Begründung:** Der Pfad ist demonstrierbar, funktioniert ohne eingehende Client-Ports und lässt sich mit echten virtuellen Interfaces testen.
 
-**Folgen:** Keine direkten Verbindungen und keine ZeroTier-typische UDP-NAT-Traversal-Optimierung. Volles Mesh skaliert quadratisch; TCP-over-TCP und der zentrale Relay verursachen Performance- und Verfügbarkeitsnachteile. Der Relay-Pfad ist nicht gegen Missbrauch durch autorisierte Geräte gehärtet.
+**Folgen:** Keine direkten Verbindungen und keine UDP-basierte NAT-Traversal-Optimierung. Volles Mesh skaliert quadratisch; TCP-over-TCP und der zentrale Relay verursachen Performance- und Verfügbarkeitsnachteile. Der Relay-Pfad ist nicht gegen Missbrauch durch autorisierte Geräte gehärtet.
 
 Beim kontrollierten Herunterfahren werden Relay-Sessions unmittelbar geschlossen; für laufende HTTP-Anfragen wartet der Controller bis zu fünf Sekunden und meldet einen Timeout als Fehler. Der Konfigurations-Watcher wird beendet und abgewartet. Dies ist ein lokaler Lifecycle-Mechanismus, kein unterbrechungsfreier Failover.
 

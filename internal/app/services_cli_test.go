@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 func TestServiceCLIAndPeerRemoval(t *testing.T) {

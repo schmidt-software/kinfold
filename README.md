@@ -1,6 +1,6 @@
-# my-zerotier
+# Kinfold
 
-Ein **experimenteller, selbst hostbarer IPv4-/IPv6-Overlay-Prototyp**, funktional von ZeroTier inspiriert. Er ist weder protokollkompatibel mit ZeroTier noch ein vollständiger Klon. Der Quellcode wurde eigenständig erstellt.
+Ein **experimenteller, selbst hostbarer IPv4-/IPv6-Overlay-Prototyp**. Er implementiert ein eigenes Protokoll und ist mit keinem anderen VPN- oder Overlay-Produkt kompatibel.
 
 > **Nicht für den Produktiveinsatz oder den Schutz vertraulicher Daten verwenden.** Es gibt keinen unabhängigen Sicherheitsaudit, keine Hochverfügbarkeit und noch wichtige Einschränkungen beim Betrieb und Widerruf. Insbesondere ist der Controller eine vollständige Vertrauensinstanz.
 
@@ -27,13 +27,17 @@ Ein **experimenteller, selbst hostbarer IPv4-/IPv6-Overlay-Prototyp**, funktiona
 
 Die Mitgliederliste wird beim Start über authentifiziertes TLS geladen, **nicht separat signiert**. Der Controller kontrolliert die Mitgliederliste und besitzt den CA-Schlüssel. Beim älteren `add-peer` erzeugt er außerdem den Geräteschlüssel; beim unten beschriebenen Offline-Enrollment entsteht der Schlüssel auf dem Gerät. Ein kompromittierter Controller kann Geräte zulassen und Verbindungen durch Austausch von Zertifikaten manipulieren. Ein Relay, das nur Pakete weiterleitet und dessen Controller/CA nicht kompromittiert ist, sieht den Inhalt der inneren TLS-Verbindung nicht; es sieht aber Metadaten wie beteiligte Geräte und Datenvolumen.
 
-Es gibt **noch keine** direkten Peer-Verbindungen, NAT-Hole-Punching, UDP-Transport, Ethernet/Bridging, Multicast, Subnetz-Gateways, zustandsbehaftete ACLs, GUI oder ZeroTier-Interoperabilität. `status` zeigt die autorisierte Mitgliederliste, nicht den Live-Verbindungszustand. Die Architekturentscheidungen stehen in [ENTSCHEIDUNGEN.md](ENTSCHEIDUNGEN.md).
+Es gibt **noch keine** direkten Peer-Verbindungen, NAT-Hole-Punching, UDP-Transport, Ethernet/Bridging, Multicast, Subnetz-Gateways, zustandsbehaftete ACLs, GUI oder Interoperabilität mit anderen VPN-Produkten. `status` zeigt die autorisierte Mitgliederliste, nicht den Live-Verbindungszustand. Die Architekturentscheidungen stehen in [ENTSCHEIDUNGEN.md](ENTSCHEIDUNGEN.md).
 
 Das [Sicherheitsmodell](SICHERHEITSMODELL.md) trennt die Eigenschaften des Prototyps von noch offenen Produktionsanforderungen, insbesondere zu Vertrauen, Policy und zeitgebundenem Widerruf.
 
+## Hinweis zur Umbenennung
+
+Das Projekt hieß bis Version `v0.1-copilot` `my-zerotier`. Mit der Umbenennung in Kinfold haben sich das Binary (`kinfold`), der Standardname des TUN-Interfaces (`kf0` statt `mzt0`), die Variable `KINFOLD_TEST_IMAGE` und der interne HTTP-Header für die Konfigurationsrevision geändert. Wegen des Headers sind ältere Clients nicht mit einem neuen Controller kompatibel und umgekehrt: Controller und **alle Clients** gemeinsam aktualisieren. Bestehende Controllerzustände und Zugangsdaten bleiben gültig; neu erzeugte CAs heißen `Kinfold CA`.
+
 ## Schnellvorführung mit Docker
 
-Voraussetzungen: Go 1.24 oder neuer, Docker mit Linux-Containern, `NET_ADMIN` und `/dev/net/tun`. Das Skript verwendet standardmäßig das Docker-Image `alpine/socat:latest` und kann es bei Bedarf herunterladen. Über `MYZT_TEST_IMAGE` lässt sich ein geeignetes vorhandenes Image mit Shell, `ip`, `ping`, `ping6`, `nc` und `socat` wählen.
+Voraussetzungen: Go 1.24 oder neuer, Docker mit Linux-Containern, `NET_ADMIN` und `/dev/net/tun`. Das Skript verwendet standardmäßig das Docker-Image `alpine/socat:latest` und kann es bei Bedarf herunterladen. Über `KINFOLD_TEST_IMAGE` lässt sich ein geeignetes vorhandenes Image mit Shell, `ip`, `ping`, `ping6`, `nc` und `socat` wählen.
 
 ```sh
 sh scripts/integration-docker.sh
@@ -48,23 +52,23 @@ Der Controller läuft auf Linux oder macOS; der VPN-Client benötigt derzeit **L
 1. Auf dem Controller bauen und initialisieren. `vpn.example.com:8443` ist durch den von allen Clients erreichbaren DNS-Namen bzw. die IP-Adresse und den TCP-Port des Controllers zu ersetzen. Der Name wird im Serverzertifikat hinterlegt und muss zum verwendeten Namen passen.
 
    ```sh
-   go build -o my-zerotier .
-   ./my-zerotier init -data controller-data \
+   go build -o kinfold .
+   ./kinfold init -data controller-data \
      -server vpn.example.com:8443 -network 10.77.0.0/24
    mkdir -m 700 credentials
-   ./my-zerotier add-peer -data controller-data \
+   ./kinfold add-peer -data controller-data \
      -id alice -ip 10.77.0.1 -out credentials/alice.json
-   ./my-zerotier add-peer -data controller-data \
+   ./kinfold add-peer -data controller-data \
      -id bob -ip 10.77.0.2 -out credentials/bob.json
-   ./my-zerotier allow -data controller-data -from alice -to bob
-   ./my-zerotier allow -data controller-data -from bob -to alice
-   ./my-zerotier serve -data controller-data -listen :8443
+   ./kinfold allow -data controller-data -from alice -to bob
+   ./kinfold allow -data controller-data -from bob -to alice
+   ./kinfold serve -data controller-data -listen :8443
    ```
 
 2. Für die Linux-Geräte ein Binary passender Architektur bauen, beispielsweise:
 
    ```sh
-   GOOS=linux GOARCH=amd64 go build -o my-zerotier-linux .
+   GOOS=linux GOARCH=amd64 go build -o kinfold-linux .
    ```
 
    Für Linux ARM64 `GOARCH=arm64` verwenden. Das Binary und **jeweils nur die passende** Zugangsdaten-Datei über einen vertrauenswürdigen, verschlüsselten Kanal auf das jeweilige Gerät übertragen. Die Datei enthält den privaten Geräteschlüssel und muss vertraulich bleiben.
@@ -72,24 +76,24 @@ Der Controller läuft auf Linux oder macOS; der VPN-Client benötigt derzeit **L
 3. Auf Alice und Bob jeweils mit ihrer eigenen Zugangsdaten-Datei starten:
 
    ```sh
-   sudo ./my-zerotier-linux run -credential alice.json
+   sudo ./kinfold-linux run -credential alice.json
    # Auf Bob stattdessen: -credential bob.json
    ```
 
    Nach dem Verbindungsaufbau sollte auf Alice `ping 10.77.0.2` funktionieren und auf Bob `ping 10.77.0.1`. Die lokale Firewall muss ICMP bzw. die verwendeten Anwendungsports zulassen. Der Controller muss von beiden Geräten über TCP erreichbar sein. `Ctrl-C` beendet den Client; das nicht persistente TUN-Interface wird dabei entfernt.
 
-Mit `./my-zerotier-linux status -credential alice.json` lässt sich die Konfiguration abfragen. `my-zerotier help` und `my-zerotier <Befehl> -h` zeigen die verfügbaren Optionen.
+Mit `./kinfold-linux status -credential alice.json` lässt sich die Konfiguration abfragen. `kinfold help` und `kinfold <Befehl> -h` zeigen die verfügbaren Optionen.
 
-Administratoren können mit `./my-zerotier check-config -data controller-data -credential admin-peer.json` prüfen, ob der authentifizierte Controller dieselbe Konfiguration geladen hat wie ein lokaler Snapshot der Zustandsdatei. Die Zugangsdaten müssen zu einem weiterhin autorisierten Gerät gehören. Der Befehl gibt beide Konfigurations-Hashes aus und liefert bei Abweichung oder Erreichbarkeitsfehler einen Fehler. Ein Treffer bestätigt weder die Aktualisierung aller Clients noch die Durchsetzung auf manipulierten Geräten; gleichzeitige Änderungen nach dem Lesen sind nicht ausgeschlossen.
+Administratoren können mit `./kinfold check-config -data controller-data -credential admin-peer.json` prüfen, ob der authentifizierte Controller dieselbe Konfiguration geladen hat wie ein lokaler Snapshot der Zustandsdatei. Die Zugangsdaten müssen zu einem weiterhin autorisierten Gerät gehören. Der Befehl gibt beide Konfigurations-Hashes aus und liefert bei Abweichung oder Erreichbarkeitsfehler einen Fehler. Ein Treffer bestätigt weder die Aktualisierung aller Clients noch die Durchsetzung auf manipulierten Geräten; gleichzeitige Änderungen nach dem Lesen sind nicht ausgeschlossen.
 
 ## Optionales IPv6
 
 Vor der Aktivierung **alle Clients und den Controller aktualisieren**: Ältere Binaries mit striktem JSON-Decoder können die zusätzlichen Felder ablehnen. Auf dem Controller ein nicht mit anderen Netzen kollidierendes ULA-`/64` und eindeutige Geräteadressen konfigurieren:
 
 ```sh
-./my-zerotier ipv6-network -data controller-data -network fd77::/64
-./my-zerotier ipv6-assign -data controller-data -id alice -ip fd77::1
-./my-zerotier ipv6-assign -data controller-data -id bob -ip fd77::2
+./kinfold ipv6-network -data controller-data -network fd77::/64
+./kinfold ipv6-assign -data controller-data -id alice -ip fd77::1
+./kinfold ipv6-assign -data controller-data -id bob -ip fd77::2
 ```
 
 Nach asynchronem Neuladen und Verbindungsaufbau sollte `ping -6 fd77::2` auf Alice funktionieren. IPv6 setzt ein funktionierendes IPv4-Overlay voraus; ein Gerät ohne IPv6-Zuweisung bleibt IPv4-only. Die vorhandenen gerichteten Freigaben gelten für beide Adressfamilien. Zum Entfernen `ipv6-assign -id alice -ip none` verwenden und erst nach Entfernen aller Zuweisungen mit `ipv6-network -network none` das IPv6-Netz deaktivieren. Ein Präfixwechsel wird abgelehnt, solange Zuweisungen nicht in das neue Netz passen.
@@ -103,7 +107,7 @@ Die CLI begrenzt beim Einlesen Anträge, private Schlüssel und Zertifikatsdatei
 1. Auf dem Gerät:
 
    ```sh
-   ./my-zerotier-linux keygen -id alice -key alice.key -request alice.csr
+   ./kinfold-linux keygen -id alice -key alice.key -request alice.csr
    shasum -a 256 alice.csr
    ```
 
@@ -113,9 +117,9 @@ Die CLI begrenzt beim Einlesen Anträge, private Schlüssel und Zertifikatsdatei
 
    ```sh
    shasum -a 256 alice.csr
-   ./my-zerotier approve -data controller-data -id alice \
+   ./kinfold approve -data controller-data -id alice \
      -ip 10.77.0.1 -request alice.csr -out alice.crt
-   ./my-zerotier export-ca -data controller-data -out ca.crt
+   ./kinfold export-ca -data controller-data -out ca.crt
    openssl x509 -in ca.crt -noout -fingerprint -sha256
    ```
 
@@ -125,9 +129,9 @@ Die CLI begrenzt beim Einlesen Anträge, private Schlüssel und Zertifikatsdatei
 
    ```sh
    openssl x509 -in ca.crt -noout -fingerprint -sha256
-   ./my-zerotier-linux enroll -server vpn.example.com:8443 \
+   ./kinfold-linux enroll -server vpn.example.com:8443 \
      -key alice.key -cert alice.crt -ca ca.crt -out alice.json
-   sudo ./my-zerotier-linux run -credential alice.json
+   sudo ./kinfold-linux run -credential alice.json
    ```
 
    `enroll` prüft, dass Zertifikat und privater Schlüssel zusammenpassen und das Zertifikat von der angegebenen CA stammt. Der Vergleich des CA-Fingerprints durch den Benutzer ist trotzdem erforderlich. Sowohl `alice.key` als auch `alice.json` enthalten private Schlüsseldaten und müssen vertraulich bleiben; neue Dateien werden mit Modus `0600` erstellt und nicht überschrieben.
@@ -155,7 +159,7 @@ Alternativ aktiviert oder ersetzt `service-apply` den vollständigen Regelsatz i
 ```
 
 ```sh
-./my-zerotier service-apply -data controller-data -rules services.json
+./kinfold service-apply -data controller-data -rules services.json
 ```
 
 Das Format enthält ausschließlich das erforderliche Array `allowed`; `{"allowed":[]}` sperrt alle Services. Ungültige, doppelte oder nicht durch eine Gerätefreigabe gedeckte Regeln werden vor dem Schreiben zurückgewiesen. Die atomare Ersetzung betrifft nur die lokale Datei, nicht die gleichzeitige Durchsetzung auf allen Clients.
@@ -163,12 +167,12 @@ Das Format enthält ausschließlich das erforderliche Array `allowed`; `{"allowe
 Für schrittweise Änderungen:
 
 ```sh
-./my-zerotier service-enable -data controller-data
-./my-zerotier service-allow -data controller-data -from alice -to bob -protocol udp -port 53
-./my-zerotier service-allow -data controller-data -from alice -to bob -protocol icmp
-./my-zerotier service-allow -data controller-data -from bob -to alice -protocol icmp
-./my-zerotier service-allow -data controller-data -from alice -to bob -protocol icmp6
-./my-zerotier service-allow -data controller-data -from bob -to alice -protocol icmp6
+./kinfold service-enable -data controller-data
+./kinfold service-allow -data controller-data -from alice -to bob -protocol udp -port 53
+./kinfold service-allow -data controller-data -from alice -to bob -protocol icmp
+./kinfold service-allow -data controller-data -from bob -to alice -protocol icmp
+./kinfold service-allow -data controller-data -from alice -to bob -protocol icmp6
+./kinfold service-allow -data controller-data -from bob -to alice -protocol icmp6
 ```
 
 Jede Service-Regel setzt die entsprechende Gerätefreigabe voraus; maximal 4096 Regeln sind zulässig. `service-deny` mit denselben Parametern entfernt sie; `deny` oder `remove-peer` entfernt dazugehörige Service-Regeln. TCP und UDP verwenden exakte **Zielports** (1–65535); `icmp` und `icmp6` erlauben alle jeweiligen ICMP-Typen ohne Port. Andere Protokolle, IPv4-Fragmente und -Optionen sowie IPv6-Erweiterungsheader einschließlich Fragmenten werden verworfen. Es gibt keine automatische Rückverkehrsregel: TCP-/UDP-Antworten an wechselnde Clientports erfordern explizite umgekehrte Regeln und sind daher praktisch eingeschränkt. ICMP-Fehler sind nicht verbindungsbezogen gefiltert. Betriebssystem-Firewalls bleiben erforderlich.
@@ -180,7 +184,7 @@ Ein aktualisierter Relay lehnt Sessions zwischen zwei Geräten ab, wenn in keine
 **Wichtige Grenze:** Ältere Client-Binaries ignorieren die Policy. Bei aktivierter Policy fordert der Relay bei Verbindungsaufbau den Hash der aktuellen Konfiguration und lehnt unveränderte alte Clients und Clients mit veralteter Konfiguration ab. Der Hash ist **kein Integritätsnachweis für die Client-Software**: Ein manipulierter Client kann ihn nachbilden. Bei alten Netzwerken ohne Policy gibt es diese Prüfung nicht. Alle Teilnehmer müssen aktualisiert werden; bestehende Sessions werden erst nach dem asynchronen Einlesen beendet. Diese Policy erfüllt noch nicht die Anforderungen an produktionsreife Zugriffskontrolle oder zeitgebundenen Widerruf.
 
 ```sh
-./my-zerotier remove-peer -data controller-data -id bob
+./kinfold remove-peer -data controller-data -id bob
 # Controller und aktuelle Clients übernehmen die Änderung asynchron.
 ```
 
@@ -194,13 +198,13 @@ Ein vorhandenes Gerät kann mit `keygen` einen **neuen** lokalen Schlüssel und 
 
 ```sh
 # Auf dem Gerät:
-./my-zerotier-linux keygen -id alice -key alice-new.key -request alice-new.csr
+./kinfold-linux keygen -id alice -key alice-new.key -request alice-new.csr
 # Nach Identitäts- und Fingerprintprüfung auf dem Controller:
-./my-zerotier rotate-peer -data controller-data -id alice -request alice-new.csr -out alice-new.crt
+./kinfold rotate-peer -data controller-data -id alice -request alice-new.csr -out alice-new.crt
 # Auf dem Gerät, nach unabhängiger Prüfung der CA:
-./my-zerotier-linux enroll -server vpn.example.com:8443 \
+./kinfold-linux enroll -server vpn.example.com:8443 \
   -key alice-new.key -cert alice-new.crt -ca ca.crt -out alice-new.json
-sudo ./my-zerotier-linux run -credential alice-new.json
+sudo ./kinfold-linux run -credential alice-new.json
 ```
 
 Nach Übernahme des Zustands wird das alte Zertifikat nicht mehr zugelassen und aktive Relay-Sessions werden beendet. Das Gerät muss den alten Client stoppen und mit den neuen Zugangsdaten starten; eine unterbrechungsfreie Rotation oder eine garantierte Widerrufsfrist gibt es nicht. Der Controller übernimmt Änderungen asynchron; eine Schreibbestätigung ist kein Durchsetzungsnachweis. Ein altes Backup kann den früheren Schlüssel wieder autorisieren, da Rollback-Schutz fehlt.
@@ -219,7 +223,7 @@ Der Controllerzustand enthält nach der ersten Schlüsselvergabe oder Migration 
 
 ## Serverzertifikat erneuern
 
-Auf dem Controller erneuert `./my-zerotier renew-server -data controller-data` das Serverzertifikat und den Serverschlüssel mit der bestehenden, noch gültigen CA. Das neue Zertifikat gilt höchstens ein Jahr und nicht länger als die CA. Der Controller muss danach neu gestartet werden; ein bereits laufender Controller schließt nach Erkennen der geänderten Identität seine Relay-Sessions und bleibt bis zum Neustart geschlossen. Der CA-Schlüssel und die Gerätezertifikate bleiben unverändert, daher müssen bei unveränderter CA und Adresse keine neuen Zugangsdaten verteilt werden. Ein bereits abgelaufenes Serverzertifikat kann erneuert werden; eine abgelaufene CA nicht. Die Dateisperre und die sonstigen Einschränkungen der Dateispeicherung gelten weiterhin.
+Auf dem Controller erneuert `./kinfold renew-server -data controller-data` das Serverzertifikat und den Serverschlüssel mit der bestehenden, noch gültigen CA. Das neue Zertifikat gilt höchstens ein Jahr und nicht länger als die CA. Der Controller muss danach neu gestartet werden; ein bereits laufender Controller schließt nach Erkennen der geänderten Identität seine Relay-Sessions und bleibt bis zum Neustart geschlossen. Der CA-Schlüssel und die Gerätezertifikate bleiben unverändert, daher müssen bei unveränderter CA und Adresse keine neuen Zugangsdaten verteilt werden. Ein bereits abgelaufenes Serverzertifikat kann erneuert werden; eine abgelaufene CA nicht. Die Dateisperre und die sonstigen Einschränkungen der Dateispeicherung gelten weiterhin.
 
 Auch bei abgelaufenem Serverzertifikat kann `remove-peer` Geräte offline aus dem Zustand entfernen, solange die CA gültig und der übrige Zustand konsistent ist. Das ist nur eine lokale Änderung, kein bestätigter oder zeitgebundener Widerruf; der Controller bleibt wegen des abgelaufenen Zertifikats geschlossen, bis das Zertifikat erneuert und der Controller neu gestartet wurde.
 - Die Verbindungslimits sind kein vollständiger Schutz vor Ressourcenmissbrauch: Insbesondere fehlen Bandbreitenbegrenzung sowie individuelle Ratenlimits für TLS-Handshakes und Verwaltungsanfragen. Ein Angreifer kann das globale Verbindungslimit auslasten. Keine automatische Sicherung, Paketinstallation, Dienstverwaltung oder gehärtete Rechteabtrennung.

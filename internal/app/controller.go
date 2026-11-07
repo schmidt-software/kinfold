@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"my-zerotier/internal/relay"
+	"github.com/schmidt-software/kinfold/internal/relay"
 )
 
 func serveController(ctx context.Context, server *http.Server, listener net.Listener, handler *relay.Server, watch func(context.Context), grace time.Duration) error {

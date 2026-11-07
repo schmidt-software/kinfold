@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 type testDevice struct{}
@@ -52,7 +52,7 @@ func TestSuperviseRefreshAndFailClosed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- supervise(ctx, cred, "mzt0", initial, "alice", 10*time.Millisecond, open, fetch, run)
+		result <- supervise(ctx, cred, "kf0", initial, "alice", 10*time.Millisecond, open, fetch, run)
 	}()
 	waitAddress := func(expected string) {
 		t.Helper()

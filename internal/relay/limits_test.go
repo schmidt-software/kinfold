@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 type blockingHijacker struct {
@@ -168,7 +168,7 @@ func TestDuplicateRelayRequestIsRejected(t *testing.T) {
 			Method: http.MethodConnect,
 			URL:    &url.URL{Path: "/relay", RawQuery: "peer=bob"},
 			Host:   server.Listener.Addr().String(),
-			Header: http.Header{"X-Myzt-Config-Revision": {revision}},
+			Header: http.Header{"X-Kinfold-Config-Revision": {revision}},
 		}
 		if err := req.Write(conn); err != nil {
 			t.Fatal(err)

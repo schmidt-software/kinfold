@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"my-zerotier/internal/agent"
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/agent"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 type tunnelOpener func(name string, addresses []string) (io.ReadWriteCloser, error)

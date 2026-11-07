@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Experimental, self-hosted IPv4/optional-IPv6 overlay network prototype, functionally inspired by ZeroTier but **not protocol-compatible** and not a clone. Pure Go 1.24, standard library only (no external modules — keep it that way; see ENTSCHEIDUNGEN.md §2). Not production-ready; the controller is a full trust anchor.
+Kinfold is an experimental, self-hosted IPv4/optional-IPv6 overlay network prototype with its own protocol (not compatible with any other VPN product). Do not reference other VPN/overlay products by name in code or docs. Pure Go 1.24, standard library only (no external modules — keep it that way; see ENTSCHEIDUNGEN.md §2). Not production-ready; the controller is a full trust anchor.
 
 Project docs are in German and must stay accurate when behavior changes:
 - `README.md` — feature list, CLI usage, known limitations
@@ -16,8 +16,8 @@ User-facing CLI/error output is also German (e.g. `Fehler:` prefix in `main.go`)
 ## Commands
 
 ```sh
-go build -o my-zerotier .
-GOOS=linux GOARCH=amd64 go build -o my-zerotier-linux .   # client tunnel only works on Linux
+go build -o kinfold .
+GOOS=linux GOARCH=amd64 go build -o kinfold-linux .   # client tunnel only works on Linux
 go test -race ./...
 go vet ./...
 go test ./internal/agent -run '^TestName$' -race           # single test
@@ -30,7 +30,7 @@ go test ./internal/agent -run '^$' -fuzz '^FuzzRelayResponse$'   -fuzztime 30s
 go test ./internal/core  -run '^$' -fuzz '^FuzzDecodeConfig$'    -fuzztime 30s
 ```
 
-The integration script uses `alpine/socat:latest` by default (override with `MYZT_TEST_IMAGE`); it builds host + Linux binaries, creates temporary credentials and an isolated Docker network, and cleans up after itself.
+The integration script uses `alpine/socat:latest` by default (override with `KINFOLD_TEST_IMAGE`); it builds host + Linux binaries, creates temporary credentials and an isolated Docker network, and cleans up after itself.
 
 ## Architecture
 

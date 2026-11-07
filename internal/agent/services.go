@@ -3,7 +3,7 @@ package agent
 import (
 	"encoding/binary"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 type serviceKey struct {

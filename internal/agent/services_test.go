@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 func serviceTestPacket(v6 bool, protocol byte, port uint16) []byte {

@@ -69,7 +69,7 @@ func NewState(address, network string) (*State, error) {
 	}
 	now := time.Now()
 	ca := &x509.Certificate{
-		SerialNumber: n, Subject: pkix.Name{CommonName: "my-zerotier CA"},
+		SerialNumber: n, Subject: pkix.Name{CommonName: "Kinfold CA"},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.AddDate(10, 0, 0),
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 	}

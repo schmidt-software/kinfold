@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"my-zerotier/internal/core"
-	"my-zerotier/internal/relay"
+	"github.com/schmidt-software/kinfold/internal/core"
+	"github.com/schmidt-software/kinfold/internal/relay"
 )
 
 func TestCertificateDeadlineClosesIdleRead(t *testing.T) {

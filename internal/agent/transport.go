@@ -15,7 +15,7 @@ import (
 	"os"
 	"time"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 const maxControllerResponseHeaderBytes = 16 << 10
@@ -124,7 +124,7 @@ func Connect(ctx context.Context, cred core.Credential, cfg core.Config, ownID s
 	if err != nil {
 		return nil, err
 	}
-	req := &http.Request{Method: http.MethodConnect, URL: &url.URL{Path: "/relay", RawQuery: url.Values{"peer": {peer.ID}}.Encode()}, Host: cred.Server, Header: http.Header{"X-Myzt-Config-Revision": {revision}}}
+	req := &http.Request{Method: http.MethodConnect, URL: &url.URL{Path: "/relay", RawQuery: url.Values{"peer": {peer.ID}}.Encode()}, Host: cred.Server, Header: http.Header{"X-Kinfold-Config-Revision": {revision}}}
 	if err := req.Write(raw); err != nil {
 		return nil, err
 	}

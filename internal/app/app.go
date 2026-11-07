@@ -15,12 +15,12 @@ import (
 	"syscall"
 	"time"
 
-	"my-zerotier/internal/agent"
-	"my-zerotier/internal/core"
-	"my-zerotier/internal/relay"
+	"github.com/schmidt-software/kinfold/internal/agent"
+	"github.com/schmidt-software/kinfold/internal/core"
+	"github.com/schmidt-software/kinfold/internal/relay"
 )
 
-const usage = `my-zerotier - experimental self-hosted IPv4/IPv6 VPN
+const usage = `kinfold - experimental self-hosted IPv4/IPv6 VPN
 
 Commands:
   init         Create controller state and a private CA
@@ -638,7 +638,7 @@ func Run(args []string) error {
 	case "status", "run":
 		f := flags(args[0])
 		path := f.String("credential", "", "private peer credential file")
-		iface := f.String("interface", "mzt0", "new Linux TUN interface name")
+		iface := f.String("interface", "kf0", "new Linux TUN interface name")
 		if err := f.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -683,7 +683,7 @@ func Run(args []string) error {
 		}
 		return runSupervised(ctx, cred, cfg, id, *iface)
 	default:
-		return fmt.Errorf("unknown command %q; run 'my-zerotier help'", args[0])
+		return fmt.Errorf("unknown command %q; run 'kinfold help'", args[0])
 	}
 }
 

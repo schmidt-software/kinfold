@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 func TestWatchFailsClosedOnInvalidPKIAndRecovers(t *testing.T) {

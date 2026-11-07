@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 func FuzzServicePacket(f *testing.F) {

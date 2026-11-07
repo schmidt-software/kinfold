@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 func TestRemovePeerWithExpiredServerCertificate(t *testing.T) {

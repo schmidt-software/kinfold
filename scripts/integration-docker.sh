@@ -5,14 +5,14 @@ set -eu
 command -v docker >/dev/null
 command -v go >/dev/null
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
-work=$(mktemp -d "${TMPDIR:-/tmp}/myzt-integration.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/tmp}/kinfold-integration.XXXXXX")
 suffix=$(basename "$work")
 network="$suffix"
 controller="$suffix-controller"
 alice="$suffix-alice"
 bob="$suffix-bob"
 charlie="$suffix-charlie"
-image=${MYZT_TEST_IMAGE:-alpine/socat:latest}
+image=${KINFOLD_TEST_IMAGE:-alpine/socat:latest}
 network_id=
 controller_id=
 alice_id=
@@ -25,7 +25,7 @@ cleanup() {
   done
   if [ -n "$network_id" ]; then docker network rm "$network_id" >/dev/null 2>&1 || true; fi
   case "$work" in
-    "${TMPDIR:-/tmp}"/myzt-integration.*) rm -rf "$work" ;;
+    "${TMPDIR:-/tmp}"/kinfold-integration.*) rm -rf "$work" ;;
     *) echo "Refusing to remove unexpected temporary path: $work" >&2 ;;
   esac
 }
@@ -38,28 +38,28 @@ case "$arch" in
   *) echo "Unsupported Docker architecture: $arch" >&2; exit 1 ;;
 esac
 cd "$root"
-go build -o "$work/myzt-host" .
-GOOS=linux GOARCH="$arch" go build -o "$work/myzt" .
-"$work/myzt-host" init -data "$work/state" -server controller:8443
-"$work/myzt-host" keygen -id alice -key "$work/alice.key" -request "$work/alice.csr"
-"$work/myzt-host" approve -data "$work/state" -id alice -ip 10.77.0.1 -request "$work/alice.csr" -out "$work/alice.crt"
-"$work/myzt-host" export-ca -data "$work/state" -out "$work/ca.crt"
-"$work/myzt-host" enroll -server controller:8443 -key "$work/alice.key" -cert "$work/alice.crt" -ca "$work/ca.crt" -out "$work/alice.json"
-"$work/myzt-host" add-peer -data "$work/state" -id bob -ip 10.77.0.2 -out "$work/bob.json"
-"$work/myzt-host" add-peer -data "$work/state" -id charlie -ip 10.77.0.3 -out "$work/charlie.json"
-"$work/myzt-host" allow -data "$work/state" -from alice -to bob
-"$work/myzt-host" allow -data "$work/state" -from bob -to alice
+go build -o "$work/kinfold-host" .
+GOOS=linux GOARCH="$arch" go build -o "$work/kinfold" .
+"$work/kinfold-host" init -data "$work/state" -server controller:8443
+"$work/kinfold-host" keygen -id alice -key "$work/alice.key" -request "$work/alice.csr"
+"$work/kinfold-host" approve -data "$work/state" -id alice -ip 10.77.0.1 -request "$work/alice.csr" -out "$work/alice.crt"
+"$work/kinfold-host" export-ca -data "$work/state" -out "$work/ca.crt"
+"$work/kinfold-host" enroll -server controller:8443 -key "$work/alice.key" -cert "$work/alice.crt" -ca "$work/ca.crt" -out "$work/alice.json"
+"$work/kinfold-host" add-peer -data "$work/state" -id bob -ip 10.77.0.2 -out "$work/bob.json"
+"$work/kinfold-host" add-peer -data "$work/state" -id charlie -ip 10.77.0.3 -out "$work/charlie.json"
+"$work/kinfold-host" allow -data "$work/state" -from alice -to bob
+"$work/kinfold-host" allow -data "$work/state" -from bob -to alice
 network_id=$(docker network create "$network")
 controller_id=$(docker run -d --name "$controller" --network "$network" --network-alias controller \
-  --mount "type=bind,src=$work/myzt,dst=/myzt,readonly" \
+  --mount "type=bind,src=$work/kinfold,dst=/kinfold,readonly" \
   --mount "type=bind,src=$work/state,dst=/state,readonly" \
-  --entrypoint /myzt "$image" serve -data /state -listen :8443)
+  --entrypoint /kinfold "$image" serve -data /state -listen :8443)
 for peer in alice bob charlie; do
   case "$peer" in alice) name=$alice ;; bob) name=$bob ;; charlie) name=$charlie ;; esac
   id=$(docker run -d --name "$name" --network "$network" --cap-add NET_ADMIN --device /dev/net/tun \
-    --mount "type=bind,src=$work/myzt,dst=/myzt,readonly" \
+    --mount "type=bind,src=$work/kinfold,dst=/kinfold,readonly" \
     --mount "type=bind,src=$work/$peer.json,dst=/credential.json,readonly" \
-    --entrypoint /myzt "$image" run -credential /credential.json)
+    --entrypoint /kinfold "$image" run -credential /credential.json)
   case "$peer" in alice) alice_id=$id ;; bob) bob_id=$id ;; charlie) charlie_id=$id ;; esac
 done
 
@@ -106,15 +106,15 @@ if [ "$tcp_ok" != true ]; then
 fi
 echo "TCP transfer through the tunnel: OK"
 
-"$work/myzt-host" ipv6-network -data "$work/state" -network fd77::/64
-"$work/myzt-host" ipv6-assign -data "$work/state" -id alice -ip fd77::1
-"$work/myzt-host" ipv6-assign -data "$work/state" -id bob -ip fd77::2
-"$work/myzt-host" ipv6-assign -data "$work/state" -id charlie -ip fd77::3
+"$work/kinfold-host" ipv6-network -data "$work/state" -network fd77::/64
+"$work/kinfold-host" ipv6-assign -data "$work/state" -id alice -ip fd77::1
+"$work/kinfold-host" ipv6-assign -data "$work/state" -id bob -ip fd77::2
+"$work/kinfold-host" ipv6-assign -data "$work/state" -id charlie -ip fd77::3
 ipv6_ready=false
 for _ in $(seq 1 30); do
   if docker exec "$alice" ping6 -c 1 -W 1 fd77::2 >/dev/null 2>&1 &&
      docker exec "$bob" ping6 -c 1 -W 1 fd77::1 >/dev/null 2>&1 &&
-     docker exec "$charlie" ip -6 addr show dev mzt0 2>/dev/null | grep -q 'fd77::3/64'; then
+     docker exec "$charlie" ip -6 addr show dev kf0 2>/dev/null | grep -q 'fd77::3/64'; then
     ipv6_ready=true
     break
   fi
@@ -179,7 +179,7 @@ if [ "$failed_closed" != true ]; then
   echo "Controller did not fail closed on invalid state" >&2
   exit 1
 fi
-if docker exec "$alice" /myzt status -credential /credential.json >/dev/null 2>&1 ||
+if docker exec "$alice" /kinfold status -credential /credential.json >/dev/null 2>&1 ||
    docker exec "$alice" ping -c 2 -W 2 10.77.0.2 >/dev/null 2>&1; then
   echo "Invalid state allowed traffic" >&2
   exit 1
@@ -199,7 +199,7 @@ if [ "$recovered" != true ]; then
 fi
 echo "Ambiguous controller state fails closed and recovers: OK"
 
-"$work/myzt-host" renew-server -data "$work/state"
+"$work/kinfold-host" renew-server -data "$work/state"
 identity_changed=false
 for _ in $(seq 1 10); do
   if docker logs "$controller" 2>&1 | grep -q 'controller TLS identity changed; restart required'; then
@@ -212,7 +212,7 @@ if [ "$identity_changed" != true ]; then
   echo "Controller did not fail closed after certificate renewal" >&2
   exit 1
 fi
-if docker exec "$alice" /myzt status -credential /credential.json >/dev/null 2>&1; then
+if docker exec "$alice" /kinfold status -credential /credential.json >/dev/null 2>&1; then
   echo "Controller accepted requests after certificate renewal without restart" >&2
   exit 1
 fi
@@ -233,10 +233,10 @@ if [ "$renewed" != true ]; then
 fi
 echo "Server certificate renewal and restart: OK"
 
-"$work/myzt-host" deny -data "$work/state" -from alice -to bob
+"$work/kinfold-host" deny -data "$work/state" -from alice -to bob
 updated=false
 for _ in $(seq 1 10); do
-  if docker exec "$alice" /myzt status -credential /credential.json 2>/dev/null | grep -q '1 directional allow rules'; then
+  if docker exec "$alice" /kinfold status -credential /credential.json 2>/dev/null | grep -q '1 directional allow rules'; then
     updated=true
     break
   fi
@@ -255,10 +255,10 @@ if docker exec "$alice" ping6 -c 2 -W 2 fd77::2 >/dev/null 2>&1; then
   exit 1
 fi
 echo "Policy update invalidates active sessions: OK"
-"$work/myzt-host" allow -data "$work/state" -from alice -to bob
+"$work/kinfold-host" allow -data "$work/state" -from alice -to bob
 updated=false
 for _ in $(seq 1 10); do
-  if docker exec "$alice" /myzt status -credential /credential.json 2>/dev/null | grep -q '2 directional allow rules'; then
+  if docker exec "$alice" /kinfold status -credential /credential.json 2>/dev/null | grep -q '2 directional allow rules'; then
     updated=true
     break
   fi
@@ -281,12 +281,12 @@ if [ "$reconnected" != true ]; then
   exit 1
 fi
 
-"$work/myzt-host" keygen -id bob -key "$work/bob-new.key" -request "$work/bob-new.csr"
-"$work/myzt-host" rotate-peer -data "$work/state" -id bob -request "$work/bob-new.csr" -out "$work/bob-new.crt"
-"$work/myzt-host" enroll -server controller:8443 -key "$work/bob-new.key" -cert "$work/bob-new.crt" -ca "$work/ca.crt" -out "$work/bob-new.json"
+"$work/kinfold-host" keygen -id bob -key "$work/bob-new.key" -request "$work/bob-new.csr"
+"$work/kinfold-host" rotate-peer -data "$work/state" -id bob -request "$work/bob-new.csr" -out "$work/bob-new.crt"
+"$work/kinfold-host" enroll -server controller:8443 -key "$work/bob-new.key" -cert "$work/bob-new.crt" -ca "$work/ca.crt" -out "$work/bob-new.json"
 rotated=false
 for _ in $(seq 1 15); do
-  if ! docker exec "$bob" /myzt status -credential /credential.json >/dev/null 2>&1; then
+  if ! docker exec "$bob" /kinfold status -credential /credential.json >/dev/null 2>&1; then
     rotated=true
     break
   fi
@@ -299,9 +299,9 @@ fi
 docker rm -f "$bob_id" >/dev/null
 bob_id=
 bob_id=$(docker run -d --name "$bob" --network "$network" --cap-add NET_ADMIN --device /dev/net/tun \
-  --mount "type=bind,src=$work/myzt,dst=/myzt,readonly" \
+  --mount "type=bind,src=$work/kinfold,dst=/kinfold,readonly" \
   --mount "type=bind,src=$work/bob-new.json,dst=/credential.json,readonly" \
-  --entrypoint /myzt "$image" run -credential /credential.json)
+  --entrypoint /kinfold "$image" run -credential /credential.json)
 rotated=false
 for _ in $(seq 1 30); do
   if docker exec "$alice" ping -c 1 -W 1 10.77.0.2 >/dev/null 2>&1 &&
@@ -329,10 +329,10 @@ cat > "$work/service-policy.json" <<'EOF'
   {"from":"bob","to":"alice","protocol":"tcp","port":12003}
 ]}
 EOF
-"$work/myzt-host" service-apply -data "$work/state" -rules "$work/service-policy.json"
+"$work/kinfold-host" service-apply -data "$work/state" -rules "$work/service-policy.json"
 service_ready=false
 for _ in $(seq 1 30); do
-  if docker exec "$alice" /myzt status -credential /credential.json 2>/dev/null | grep -q '7 directional service rules' &&
+  if docker exec "$alice" /kinfold status -credential /credential.json 2>/dev/null | grep -q '7 directional service rules' &&
      docker exec "$alice" ping -c 1 -W 1 10.77.0.2 >/dev/null 2>&1 &&
      docker exec "$alice" ping6 -c 1 -W 1 fd77::2 >/dev/null 2>&1; then
     service_ready=true
@@ -370,10 +370,10 @@ if [ "$tcp6_filtered" != true ]; then
   echo "IPv6 TCP transfer with explicit bidirectional service rules failed" >&2
   exit 1
 fi
-"$work/myzt-host" service-deny -data "$work/state" -from alice -to bob -protocol icmp6
+"$work/kinfold-host" service-deny -data "$work/state" -from alice -to bob -protocol icmp6
 service_updated=false
 for _ in $(seq 1 30); do
-  if docker exec "$alice" /myzt status -credential /credential.json 2>/dev/null | grep -q '6 directional service rules' &&
+  if docker exec "$alice" /kinfold status -credential /credential.json 2>/dev/null | grep -q '6 directional service rules' &&
      docker exec "$alice" ping -c 1 -W 1 10.77.0.2 >/dev/null 2>&1 &&
      ! docker exec "$alice" ping6 -c 2 -W 1 fd77::2 >/dev/null 2>&1; then
     service_updated=true
@@ -387,10 +387,10 @@ if [ "$service_updated" != true ]; then
 fi
 echo "Experimental service filtering and dual-stack update: OK"
 
-"$work/myzt-host" remove-peer -data "$work/state" -id bob
+"$work/kinfold-host" remove-peer -data "$work/state" -id bob
 ready=false
 for _ in $(seq 1 10); do
-  if ! docker exec "$bob" /myzt status -credential /credential.json >/dev/null 2>&1; then
+  if ! docker exec "$bob" /kinfold status -credential /credential.json >/dev/null 2>&1; then
     ready=true
     break
   fi
@@ -400,7 +400,7 @@ if [ "$ready" != true ]; then
   echo "Controller did not load peer removal" >&2
   exit 1
 fi
-if docker exec "$bob" /myzt status -credential /credential.json >/dev/null 2>&1; then
+if docker exec "$bob" /kinfold status -credential /credential.json >/dev/null 2>&1; then
   echo "Revoked peer still authorized" >&2
   exit 1
 fi

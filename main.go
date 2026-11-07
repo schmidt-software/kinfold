@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"my-zerotier/internal/app"
+	"github.com/schmidt-software/kinfold/internal/app"
 )
 
 func main() {

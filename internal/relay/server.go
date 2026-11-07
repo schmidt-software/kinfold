@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 type pending struct {
@@ -202,7 +202,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	}
 	if s.config.Policy != nil {
 		revision, err := s.config.Revision()
-		if err != nil || r.Header.Get("X-Myzt-Config-Revision") != revision {
+		if err != nil || r.Header.Get("X-Kinfold-Config-Revision") != revision {
 			s.mu.Unlock()
 			http.Error(w, "current policy configuration required", http.StatusConflict)
 			return

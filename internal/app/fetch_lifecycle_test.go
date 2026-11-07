@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 func TestSuperviseReportsAgentFailureDuringFetch(t *testing.T) {
@@ -41,7 +41,7 @@ func TestSuperviseReportsAgentFailureDuringFetch(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- supervise(ctx, cred, "mzt0", state.Config, "alice", time.Millisecond, open, fetch, run)
+		done <- supervise(ctx, cred, "kf0", state.Config, "alice", time.Millisecond, open, fetch, run)
 	}()
 	select {
 	case <-started:
@@ -94,7 +94,7 @@ func TestSuperviseCancelsSingleOutstandingFetchOnShutdown(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- supervise(ctx, cred, "mzt0", state.Config, "alice", time.Millisecond, open, fetch, run)
+		done <- supervise(ctx, cred, "kf0", state.Config, "alice", time.Millisecond, open, fetch, run)
 	}()
 	select {
 	case <-started:

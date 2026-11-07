@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 type link struct {

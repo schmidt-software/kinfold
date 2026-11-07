@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"my-zerotier/internal/core"
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 func TestRelayPeerPairAdmission(t *testing.T) {
@@ -37,7 +37,7 @@ func TestRelayPeerPairAdmission(t *testing.T) {
 		}
 		req := httptest.NewRequest(http.MethodConnect, "/relay?peer=bob", nil)
 		req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
-		req.Header.Set("X-Myzt-Config-Revision", revision)
+		req.Header.Set("X-Kinfold-Config-Revision", revision)
 		recorder := httptest.NewRecorder()
 		server.ServeHTTP(recorder, req)
 		return recorder.Code
