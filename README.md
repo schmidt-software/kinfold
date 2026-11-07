@@ -37,7 +37,7 @@ Das Projekt hieß bis Version `v0.1-copilot` `my-zerotier`. Mit der Umbenennung 
 
 ## Schnellvorführung mit Docker
 
-Voraussetzungen: Go 1.24 oder neuer, Docker mit Linux-Containern, `NET_ADMIN` und `/dev/net/tun`. Das Skript verwendet standardmäßig das Docker-Image `alpine/socat:latest` und kann es bei Bedarf herunterladen. Über `KINFOLD_TEST_IMAGE` lässt sich ein geeignetes vorhandenes Image mit Shell, `ip`, `ping`, `ping6`, `nc` und `socat` wählen.
+Voraussetzungen: die in `go.mod` festgelegte Go-Version (wird von Go automatisch nachgeladen), Docker mit Linux-Containern, `NET_ADMIN` und `/dev/net/tun`. Das Skript verwendet standardmäßig das Docker-Image `alpine/socat:latest` und kann es bei Bedarf herunterladen. Über `KINFOLD_TEST_IMAGE` lässt sich ein geeignetes vorhandenes Image mit Shell, `ip`, `ping`, `ping6`, `nc` und `socat` wählen.
 
 ```sh
 sh scripts/integration-docker.sh
