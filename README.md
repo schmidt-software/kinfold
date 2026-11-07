@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Kinfold logo: a ring of six network nodes joined through a central relay core" width="256">
+</p>
+
 # Kinfold
 
 An **experimental, self-hostable IPv4/IPv6 overlay network prototype**. It implements its own protocol and is not compatible with any other VPN or overlay product.
