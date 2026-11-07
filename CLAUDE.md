@@ -6,12 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Kinfold is an experimental, self-hosted IPv4/optional-IPv6 overlay network prototype with its own protocol (not compatible with any other VPN product). Do not reference other VPN/overlay products by name in code or docs. Pure Go 1.24, standard library only (no external modules — keep it that way; see ENTSCHEIDUNGEN.md §2). Not production-ready; the controller is a full trust anchor.
 
-Project docs are in German and must stay accurate when behavior changes:
+Repository language is English (code, comments, docs, CLI output, commits, PRs). Docs that must stay accurate when behavior changes:
 - `README.md` — feature list, CLI usage, known limitations
-- `ENTSCHEIDUNGEN.md` — architecture decision records
-- `SICHERHEITSMODELL.md` — threat model and open production requirements
+- `ENTSCHEIDUNGEN.md` — architecture decision records (German, being migrated to `docs/DECISIONS.md`)
+- `SICHERHEITSMODELL.md` — threat model and open production requirements (German, being migrated to `docs/SECURITY-MODEL.md`)
+- `docs/DECISION-LOG.md` — numbered log of every non-trivial decision; add an entry in the same PR as the change
+- `docs/review-v0.1-copilot.md` — consolidated review of the baseline (once merged)
 
-User-facing CLI/error output is also German (e.g. `Fehler:` prefix in `main.go`).
+## Workflow
+
+Issue → branch `<issue>-<slug>` → atomic commits → PR → CI green → rebase merge → delete branch. No direct commits to `main`. Details in `CONTRIBUTING.md`. Run the Docker integration test locally before merging anything that touches `internal/agent`, `internal/relay` or the supervisor; note the result in the PR.
 
 ## Commands
 
