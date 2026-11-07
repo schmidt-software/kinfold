@@ -82,7 +82,9 @@ The controller runs on Linux or macOS; the VPN client currently requires **Linux
 
    After the connection is established, `ping 10.77.0.2` should work on Alice and `ping 10.77.0.1` on Bob. The local firewall must allow ICMP or the application ports used. The controller must be reachable from both devices over TCP. `Ctrl-C` stops the client; the non-persistent TUN interface is removed.
 
-`./kinfold-linux status -credential alice.json` queries the configuration. `kinfold help` and `kinfold <command> -h` show the available options.
+`./kinfold-linux status -credential alice.json` queries the configuration. `kinfold help` and `kinfold <command> -h` show the available options; `kinfold version` prints the build (version, commit, Go version, platform).
+
+`serve` and `run` log to stderr via `log/slog`. `-log-format text|json` selects the format, `-log-level debug|info|warn|error` the minimum level (default `info`). Per-packet drop messages (MTU exceeded, peer queue full) are logged at `debug` level so they cannot flood production logs.
 
 Administrators can use `./kinfold check-config -data controller-data -credential admin-peer.json` to check whether the authenticated controller has loaded the same configuration as a local snapshot of the state file. The credential must belong to a device that is still authorized. The command prints both configuration hashes and returns an error on mismatch or reachability failure. It does not prove that clients have already adopted the configuration.
 
