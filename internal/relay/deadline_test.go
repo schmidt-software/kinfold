@@ -5,12 +5,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 type failingDeadlineConn struct {
@@ -32,7 +29,8 @@ func TestRelayResponseDeadlineErrorsReleaseEndpoint(t *testing.T) {
 			name = "clear"
 		}
 		t.Run(name, func(t *testing.T) {
-			server, err := New(core.Config{Network: "10.77.0.0/24"})
+			cfg := pairConfig(t)
+			server, err := New(cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -42,7 +40,7 @@ func TestRelayResponseDeadlineErrorsReleaseEndpoint(t *testing.T) {
 			w := &blockingHijacker{conn: &failingDeadlineConn{Conn: left, failClear: failClear}, header: make(http.Header)}
 			done := make(chan struct{})
 			go func() {
-				server.connect(w, httptest.NewRequest(http.MethodConnect, "/relay", nil), "alice", "bob", 0)
+				server.connect(w, relayRequest(t, cfg), "alice", "bob", 0)
 				close(done)
 			}()
 			if failClear {

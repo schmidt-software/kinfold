@@ -29,7 +29,8 @@ func (w *blockingHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func TestSlowRelayResponseDoesNotBlockRevocation(t *testing.T) {
-	s, err := New(core.Config{Network: "10.77.0.0/24"})
+	cfg := pairConfig(t)
+	s, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestSlowRelayResponseDoesNotBlockRevocation(t *testing.T) {
 	writer := &blockingHijacker{conn: left, header: make(http.Header)}
 	done := make(chan struct{})
 	go func() {
-		s.connect(writer, httptest.NewRequest(http.MethodConnect, "/relay", nil), "alice", "bob", 0)
+		s.connect(writer, relayRequest(t, cfg), "alice", "bob", 0)
 		close(done)
 	}()
 	deadline := time.Now().Add(time.Second)

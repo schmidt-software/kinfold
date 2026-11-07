@@ -64,7 +64,14 @@ func TestRelayPeerPairAdmission(t *testing.T) {
 		t.Fatalf("stale revision: %d", got)
 	}
 	state.Config.Policy = nil
-	if got := request(state.Config, ""); got != http.StatusInternalServerError {
-		t.Fatalf("legacy allow-all changed: %d", got)
+	revision, err = state.Config.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := request(state.Config, ""); got != http.StatusConflict {
+		t.Fatalf("missing revision accepted without policy: %d", got)
+	}
+	if got := request(state.Config, revision); got != http.StatusForbidden {
+		t.Fatalf("configuration without policy did not deny the pair: %d", got)
 	}
 }

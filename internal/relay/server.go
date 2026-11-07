@@ -208,18 +208,16 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		reject(w, "configuration changed", http.StatusServiceUnavailable)
 		return
 	}
-	if s.config.Policy != nil {
-		revision, err := s.config.Revision()
-		if err != nil || r.Header.Get("X-Kinfold-Config-Revision") != revision {
-			s.mu.Unlock()
-			reject(w, "current policy configuration required", http.StatusConflict)
-			return
-		}
-		if !s.config.Permits(from, to) && !s.config.Permits(to, from) {
-			s.mu.Unlock()
-			reject(w, "peer pair not authorized", http.StatusForbidden)
-			return
-		}
+	revision, err := s.config.Revision()
+	if err != nil || r.Header.Get("X-Kinfold-Config-Revision") != revision {
+		s.mu.Unlock()
+		reject(w, "current configuration required", http.StatusConflict)
+		return
+	}
+	if !s.config.Permits(from, to) && !s.config.Permits(to, from) {
+		s.mu.Unlock()
+		reject(w, "peer pair not authorized", http.StatusForbidden)
+		return
 	}
 	if s.waiting[key] != nil {
 		s.mu.Unlock()
