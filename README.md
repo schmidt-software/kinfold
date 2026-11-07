@@ -22,7 +22,8 @@ An **experimental, self-hostable IPv4/IPv6 overlay network prototype**. It imple
 - On controller shutdown, relay sessions are terminated immediately and running HTTP requests are awaited for up to five seconds; on timeout the error is reported and the server is closed.
 - Controller state, credentials and received configuration are parsed strictly: unknown or duplicate JSON fields, oversized documents and trailing data are rejected.
 - Controller response headers are limited to 16 KiB when fetching the configuration and when establishing a relay connection.
-- On load, the controller additionally checks the CA and server key pairs, the server certificate including hostname and validity, and the CA signatures of the registered device certificates.
+- On load, the controller additionally checks the CA and server key pairs, the server certificate including hostname and validity, and every registered device certificate: CA signature, not a CA itself, Ed25519 key, exactly the client and server authentication usages, and common name equal to the device ID. Expired or soon-expiring (30 days) certificates are logged as warnings at startup; an expired device certificate does not stop the controller.
+- The IPv4 network must lie within 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 or 100.64.0.0/10; IPv6 prefixes and addresses are stored in canonical form. A device ID must differ from the controller host name. New CAs are limited to issuing end-entity certificates (path length 0).
 - Different devices must not share a public key even with different certificates; inconsistent configurations are rejected.
 - New networks deny traffic between devices by default; static directional allow rules can be set via the CLI.
 - The relay and current clients only establish a peer session for device pairs with at least one directional allow rule; traffic is still checked separately per direction.

@@ -260,3 +260,25 @@ when a direct (non-relay) data path is added (#21).
 
 **Consequences:** Clients survive controller restarts without dropping the
 interface. The grace value is a constant for alpha.
+
+## D-014 — 2026-11-08 — active — Stricter state validation
+
+**Decision:** The controller rejects a state whose device certificates are
+CA certificates, lack exactly the client+server authentication usages, use a
+non-Ed25519 key, or whose common name differs from the peer ID. Expiry is
+only reported (startup warnings, 30-day window), not rejected. The IPv4
+network must be private (RFC 1918) or shared (RFC 6598) space. IPv6 values
+must be canonical; the CLI canonicalises input. New certificates carry
+explicit basic constraints, and new CAs have path length 0. Peer IDs must
+differ from the controller host name.
+
+**Rationale:** Review findings C-02/C-03/C-04. Each rule is defence in depth
+against a state that the CLI would never produce but that a manual edit,
+an old tool or a compromised writer could: a CA-capable "device" could mint
+further certificates; a `0.0.0.0/0` network would route all host traffic
+into the tunnel; non-canonical addresses produced spurious revision changes.
+Rejecting an expired device would let one forgotten device take the whole
+controller down, so expiry stays a warning (TLS rejects the device anyway).
+
+**Consequences:** A hand-edited or very old state that violates a rule no
+longer loads; the error names the peer and the rule.
