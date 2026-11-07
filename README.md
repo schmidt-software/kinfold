@@ -17,7 +17,7 @@ An **experimental, self-hostable IPv4/IPv6 overlay network prototype**. It imple
 - Established peer connections get an I/O deadline at the earliest expiry of the device, controller and CA certificates involved; data already buffered by TLS is not delivered to the packet parser after expiry either. The connection is then re-established. This local deadline is neither a tamper-proof clock nor a revocation guarantee.
 - IPv4 and optional IPv6 unicast packets only between the assigned device addresses; source and destination addresses are checked against spoofing. Automatic reconnection after connection loss.
 - The fixed tunnel MTU is 1280 bytes. Larger outgoing packets are dropped; an incoming frame above this limit terminates the affected peer session.
-- Reconnection attempts use exponential backoff with random jitter up to 30 seconds; after 30 seconds of stable connection the backoff is reset.
+- Reconnection attempts use exponential backoff with random jitter up to 30 seconds; after 30 seconds of stable connection the backoff is reset. A peer session ends when a single frame cannot be written within 10 seconds, and TCP keepalive detects a dead relay connection after about 30 seconds, so a broken path is replaced quickly.
 - On a write error at the tunnel device the client terminates the tunnel with an error instead of only re-establishing the affected peer connection.
 - On controller shutdown, relay sessions are terminated immediately and running HTTP requests are awaited for up to five seconds; on timeout the error is reported and the server is closed.
 - Controller state, credentials and received configuration are parsed strictly: unknown or duplicate JSON fields, oversized documents and trailing data are rejected.
