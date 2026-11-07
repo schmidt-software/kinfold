@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Kinfold is an experimental, self-hosted IPv4/optional-IPv6 overlay network prototype with its own protocol (not compatible with any other VPN product). Do not reference other VPN/overlay products by name in code or docs. Pure Go 1.24, standard library only (no external modules — keep it that way; see ENTSCHEIDUNGEN.md §2). Not production-ready; the controller is a full trust anchor.
+Kinfold is an experimental, self-hosted IPv4/optional-IPv6 overlay network prototype with its own protocol (not compatible with any other VPN product). Do not reference other VPN/overlay products by name in code or docs. Go toolchain pinned in go.mod (see D-009), standard library only (no external modules — keep it that way; see ENTSCHEIDUNGEN.md §2). Not production-ready; the controller is a full trust anchor.
 
 Repository language is English (code, comments, docs, CLI output, commits, PRs). Docs that must stay accurate when behavior changes:
 - `README.md` — feature list, CLI usage, known limitations

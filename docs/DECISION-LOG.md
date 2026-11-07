@@ -141,7 +141,7 @@ library.
 foregone. Tooling that does not become a dependency (`govulncheck` in CI) is
 allowed.
 
-## D-008 — 2026-11-08 — active — Go toolchain version
+## D-008 — 2026-11-08 — superseded by D-009 — Go toolchain version
 
 **Decision:** `go.mod` keeps `go 1.24` as the minimum; CI uses the version
 from `go.mod` via `go-version-file`. Newer local toolchains may be used for
@@ -149,3 +149,25 @@ development but must not introduce APIs above 1.24.
 
 **Rationale:** 1.24 is what the prototype was written against; raising the
 floor gives no benefit for alpha.
+
+## D-009 — 2026-11-08 — active — Pin the Go toolchain to the latest patch release
+
+**Decision:** `go.mod` pins the exact toolchain (`go 1.26.10` at the time of
+writing). Go's toolchain switching (`GOTOOLCHAIN=auto`, the default) downloads
+it automatically for developers; CI reads it via `go-version-file`. The pin is
+bumped to every new patch release of the supported Go line as part of regular
+maintenance; `govulncheck` in CI fails when the pinned toolchain has known
+vulnerabilities that the code reaches, which is the trigger.
+
+**Rationale:** The first CI run with `go 1.24` resolved to Go 1.24.13 and
+`govulncheck` reported 25 reachable standard-library vulnerabilities,
+including a `crypto/tls` denial of service (GO-2026-4870) in exactly the
+handshake and read/write paths Kinfold depends on. Go 1.24 is end of life.
+Even the locally installed 1.26.5 had 15 reachable findings; 1.26.10 has
+none. For a program whose entire security rests on `crypto/tls` and
+`crypto/x509`, the toolchain patch level is part of the security posture and
+must be explicit and reproducible, not "whatever is installed".
+
+**Consequences:** Builds are reproducible across machines. Every Go patch
+release requires a one-line `go.mod` change; CI makes forgetting it visible.
+Supersedes D-008.
