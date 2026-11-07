@@ -30,7 +30,7 @@ Commands:
   export-ca    Export the controller CA certificate
   enroll       Assemble a credential using the local key and trusted CA
   remove-peer  Remove a peer
-  policy-enable Enable default-deny for a legacy configuration
+  policy-enable Add the policy section to a pre-policy state file
   allow        Allow packets in one direction between peers
   deny         Remove a directional allow rule
   service-enable Enable experimental default-deny service filtering
@@ -617,7 +617,7 @@ func Run(args []string) error {
 			return err
 		}
 		if s.Config.Policy == nil {
-			slog.Warn("legacy network allows all peer traffic; use policy-enable to opt into default-deny")
+			return fmt.Errorf("state has no policy section (pre-policy format); run 'kinfold policy-enable -data %s' and add allow rules before serving", *dir)
 		}
 		handler, err := relay.New(s.Config)
 		if err != nil {
@@ -675,9 +675,9 @@ func Run(args []string) error {
 		}
 		if cfg.Policy == nil {
 			if args[0] == "run" {
-				slog.Warn("legacy network allows all peer traffic; default-deny is not enabled")
+				slog.Warn("configuration has no policy; all peer traffic is denied")
 			} else {
-				fmt.Fprintln(os.Stderr, "WARNING: legacy network allows all peer traffic; default-deny is not enabled.")
+				fmt.Fprintln(os.Stderr, "WARNING: configuration has no policy; all peer traffic is denied.")
 			}
 		} else {
 			fmt.Printf("Static default-deny policy: %d directional allow rules\n", len(cfg.Policy.Allowed))
