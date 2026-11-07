@@ -39,6 +39,11 @@ const (
 	peerQueueDepth = 128
 )
 
+// peerWriteTimeout bounds a single frame write to a peer. Without it a dead
+// path with data in flight blocks the sender until TCP gives up
+// retransmitting, about 15 minutes on Linux (review A-01).
+var peerWriteTimeout = 10 * time.Second
+
 type tunnelWriteError struct{ err error }
 
 func (e *tunnelWriteError) Error() string { return fmt.Sprintf("write tunnel: %v", e.err) }
@@ -246,6 +251,10 @@ func (l *link) session(ctx context.Context, conn net.Conn, localIP netip.Addr, d
 		for {
 			select {
 			case packet := <-l.queue:
+				if err := conn.SetWriteDeadline(time.Now().Add(peerWriteTimeout)); err != nil {
+					done <- err
+					return
+				}
 				if err := WritePacket(conn, packet); err != nil {
 					done <- err
 					return

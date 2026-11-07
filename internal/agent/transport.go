@@ -203,6 +203,30 @@ type certificateConn struct {
 	expiry   time.Time
 }
 
+// clamp keeps caller deadlines from extending past certificate expiry; the
+// socket deadline set at connect time would otherwise be overwritten.
+func (c *certificateConn) clamp(t time.Time) time.Time {
+	if c.deadline.IsZero() {
+		return t
+	}
+	if t.IsZero() || t.After(c.deadline) {
+		return c.deadline
+	}
+	return t
+}
+
+func (c *certificateConn) SetDeadline(t time.Time) error {
+	return c.Conn.SetDeadline(c.clamp(t))
+}
+
+func (c *certificateConn) SetReadDeadline(t time.Time) error {
+	return c.Conn.SetReadDeadline(c.clamp(t))
+}
+
+func (c *certificateConn) SetWriteDeadline(t time.Time) error {
+	return c.Conn.SetWriteDeadline(c.clamp(t))
+}
+
 func (c *certificateConn) expired() bool {
 	now := time.Now()
 	return !now.Before(c.deadline) || !now.Before(c.expiry)
