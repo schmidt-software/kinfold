@@ -33,6 +33,10 @@ type SignedPayload struct {
 	IssuedAt time.Time `json:"issued_at"`
 	NotAfter time.Time `json:"not_after"`
 	Config   Config    `json:"config"`
+	// Endpoints lists direct-connection addresses (host:port) of peers in
+	// the view that accept direct sessions (D-026). It is signed but kept
+	// out of Config, so changing addresses do not change revisions.
+	Endpoints map[string][]string `json:"endpoints,omitempty"`
 }
 
 // SignedConfig is the envelope served on GET /config.
@@ -84,8 +88,8 @@ func (s *State) ConfigPublicKey() (ed25519.PublicKey, error) {
 }
 
 // SignConfig signs the view for peer with the given lease.
-func SignConfig(key ed25519.PrivateKey, peer string, view Config, now time.Time, lease time.Duration) (SignedConfig, error) {
-	payload, err := json.Marshal(SignedPayload{Peer: peer, IssuedAt: now.UTC(), NotAfter: now.Add(lease).UTC(), Config: view})
+func SignConfig(key ed25519.PrivateKey, peer string, view Config, endpoints map[string][]string, now time.Time, lease time.Duration) (SignedConfig, error) {
+	payload, err := json.Marshal(SignedPayload{Peer: peer, IssuedAt: now.UTC(), NotAfter: now.Add(lease).UTC(), Config: view, Endpoints: endpoints})
 	if err != nil {
 		return SignedConfig{}, err
 	}

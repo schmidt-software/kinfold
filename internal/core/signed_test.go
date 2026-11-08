@@ -26,7 +26,7 @@ func TestSignedConfigRoundTripAndRejections(t *testing.T) {
 	}
 	now := time.Now()
 	view := s.Config.ForPeer("alice")
-	env, err := SignConfig(priv, "alice", view, now, DefaultLease)
+	env, err := SignConfig(priv, "alice", view, nil, now, DefaultLease)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestSignedConfigRoundTripAndRejections(t *testing.T) {
 	if _, err := VerifyConfig(env, pub, "alice", time.Time{}, now.Add(DefaultLease)); !errors.Is(err, ErrConfigExpired) {
 		t.Fatalf("expired lease: %v", err)
 	}
-	future, _ := SignConfig(priv, "alice", view, now.Add(time.Hour), DefaultLease)
+	future, _ := SignConfig(priv, "alice", view, nil, now.Add(time.Hour), DefaultLease)
 	if _, err := VerifyConfig(future, pub, "alice", time.Time{}, now); err == nil {
 		t.Fatal("configuration from the future accepted")
 	}
