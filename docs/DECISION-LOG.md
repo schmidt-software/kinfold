@@ -504,3 +504,28 @@ to unrelated devices, so they need no reaction at all.
 controller and clients together. `check-config` compares the view of the
 credential's device. Revocation is unaffected: removing a device changes
 the signature of every pair it belongs to.
+
+## D-024 — 2026-11-08 — active — Online enrollment with single-use tokens
+
+**Decision:** `kinfold token` issues a 256-bit random token bound to one
+device ID and IPv4 address with a lifetime of at most seven days (default
+one hour); the state stores only its SHA-256 hash. `kinfold join` generates
+the key on the device and posts a CSR with the token to `POST /enroll`. The
+controller now sends its CA certificate in the TLS chain and accepts
+handshakes without a client certificate; only `/enroll` may be used
+without one. The device verifies the server certificate against the CA
+whose fingerprint it was given **before** sending the token. Enrollment
+applies the `approve` checks (Ed25519, CN = ID, key history) and consumes
+the token; failed attempts block the source address for 30 s.
+
+**Rationale:** Issue #23: offline enrollment needs two manual file
+transfers and an out-of-band hash comparison per device. A token reduces
+this to one confidential message while keeping the key on the device. Pinning
+the CA before revealing the token prevents a machine in the middle from
+capturing it; binding it to ID and address limits the damage of a leaked
+token to exactly the device it was meant for.
+
+**Consequences:** Unauthenticated clients can now complete TLS handshakes,
+which costs the controller more per connection than before; the listener
+limits (D-011) bound that cost. A leaked unused token lets its holder enroll
+as that device until it expires or is revoked.

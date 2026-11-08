@@ -114,6 +114,25 @@ Before enabling, **update all clients and the controller**: older binaries with 
 
 After the asynchronous reload and reconnection, `ping -6 fd77::2` should work on Alice. IPv6 requires a working IPv4 overlay; a device without an IPv6 assignment stays IPv4-only. The existing directional allow rules apply to both address families. Use `ipv6-assign -id alice -ip none` to remove an assignment, and only after all assignments are removed, `ipv6-network -network none` to disable the IPv6 network. Changes take effect asynchronously; existing sessions are disconnected after adoption.
 
+## Online enrollment with a token
+
+The quickest way to add a device: the administrator issues a single-use token bound to the device ID and address, and the device enrolls itself online. Its private key is generated on the device and never leaves it.
+
+On the controller:
+
+```sh
+./kinfold token -data controller-data -id carol -ip 10.77.0.3 -ttl 1h
+```
+
+The command prints the token once, together with a ready-made `join` command containing the controller address and the SHA-256 fingerprint of the CA. Send that command to the device over a confidential channel (anyone who has it before it is used can enroll as `carol`). On the device:
+
+```sh
+./kinfold-linux join -server vpn.example.com:8443 -ca-sha256 <fingerprint> -id carol -token <token> -out carol.json
+sudo ./kinfold-linux run -credential carol.json
+```
+
+`join` verifies the controller against the pinned CA fingerprint **before** it sends the token, so a machine in the middle cannot capture it. Tokens expire (default one hour, at most seven days), work once, and only for their ID and address; only a hash is stored. `token-list` shows pending tokens and `token-revoke -id carol` withdraws one. Failed attempts are slowed down per source address. To accept enrollments without a client certificate, the controller's TLS handshake no longer requires one; every endpoint other than `POST /enroll` still does.
+
 ## Offline enrollment with a local key
 
 As an alternative to `add-peer`, a device can generate its own private key. The procedure is **experimental and offline**: the request proves possession of the key but does not authenticate the person or the device. Request and CA must be authenticated and compared independently; there are no one-time tokens, request expiry or online approval yet.
