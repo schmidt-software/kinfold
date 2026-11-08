@@ -91,7 +91,7 @@ func TestStandbyServesWhenPrimaryIsDown(t *testing.T) {
 	replica.Primary = "localhost:" + primaryPort
 	stopPrimary := runTestController(t, primaryDir, primaryAddr, nil)
 	standbyDir := filepath.Join(t.TempDir(), "standby")
-	runTestController(t, standbyDir, standbyAddr, &replica)
+	stopStandby := runTestController(t, standbyDir, standbyAddr, &replica)
 	// A change on the primary reaches the standby within a few seconds.
 	if err := Run([]string{"add-peer", "-data", primaryDir, "-id", "bob", "-ip", "10.77.0.2", "-out", filepath.Join(t.TempDir(), "bob.json")}); err != nil {
 		t.Fatal(err)
@@ -135,6 +135,26 @@ func TestStandbyServesWhenPrimaryIsDown(t *testing.T) {
 	}
 	if _, err := client.Renew(ctx, []byte("csr")); err == nil || errorsIsRefused(err) {
 		t.Fatalf("standby renewal: %v (must fail, but not as a refusal)", err)
+	}
+
+	// Promotion: the stopped standby becomes the primary at its own address.
+	stopStandby()
+	if err := Run([]string{"replica-promote", "-data", standbyDir, "-standby", replicaPath}); err != nil {
+		t.Fatal(err)
+	}
+	promoted, err := core.LoadState(standbyDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if promoted.Server != "localhost:"+standbyPort || promoted.Replicas != nil {
+		t.Fatalf("promoted state: server %s, replicas %v", promoted.Server, promoted.Replicas)
+	}
+	runTestController(t, standbyDir, standbyAddr, nil)
+	if _, id, err := client.Fetch(ctx); err != nil || id != "alice" {
+		t.Fatalf("fetch from the promoted controller: %q %v", id, err)
+	}
+	if got := client.Controllers(); len(got) != 1 || got[0] != "localhost:"+standbyPort {
+		t.Fatalf("controller list after promotion %v", got)
 	}
 }
 
