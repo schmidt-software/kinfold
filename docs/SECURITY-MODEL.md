@@ -55,8 +55,12 @@ Known residual risks are listed below and in the README's "Known limits".
 
 The Linux client obtains a member list from the controller over mutually
 authenticated TLS. The additional TLS connection per peer checks certificates
-against the delivered list and the CA. The list is not independently signed;
-the controller controls it and the CA key. The older `add-peer` generates
+against the delivered list and the CA. Since v0.4 the list is signed with a
+dedicated configuration key and carries a lease and an issue time; devices
+verify it against the key pinned in their credential, refuse older
+configurations (the newest issue time is persisted next to the credential)
+and close the tunnel when the lease ends (DECISION-LOG D-025). The controller
+still controls the list, the CA key and the signing key. The older `add-peer` generates
 device keys on the controller, offline enrollment generates them locally.
 
 New networks have directional device rules with default deny. Sender and
@@ -78,8 +82,10 @@ seconds. Because the relay requires the current configuration revision for
 every new session and closes all sessions on change, a client with a stale
 configuration cannot open or keep relay sessions in the meantime. Changes and broken state invalidate
 relay sessions after detection. The CLI, however, only confirms the local
-write, not the load or a consistent commit. There is no signed lease, no
-rollback protection and no proven time-bound revocation. The client limits
+write, not the load or a consistent commit. Signed leases bound how long a
+device acts on an outdated configuration when its clock is correct; there is
+no rollback protection for the controller's own state, no quorum commit and
+no proven time-bound revocation. The client limits
 established peer sessions with a local I/O deadline at the earliest expiry of
 the device, controller and CA certificates used. An additional check prevents
 delivery of data already in the TLS buffer after locally detected expiry. This
