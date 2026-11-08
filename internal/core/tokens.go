@@ -1,6 +1,7 @@
 package core
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -19,6 +20,10 @@ type EnrollmentToken struct {
 	IP       string    `json:"ip"`
 	Hash     string    `json:"hash"`
 	NotAfter time.Time `json:"not_after"`
+	// Enrolled marks a used token. It is kept until NotAfter so a device
+	// whose response was lost can collect its certificate again with the
+	// same key (as for renewal, D-018); it never enrolls a second key.
+	Enrolled bool `json:"enrolled,omitempty"`
 }
 
 const (
@@ -30,6 +35,9 @@ const (
 
 // ErrTokenInvalid hides whether a token is unknown, expired or already used.
 var ErrTokenInvalid = errors.New("enrollment token is invalid, expired or already used")
+
+// TokenHash returns the stored form of a token secret.
+func TokenHash(secret string) string { return hashToken(secret) }
 
 func hashToken(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
@@ -109,7 +117,7 @@ func (s *State) PruneTokens(now time.Time) {
 // RevokeToken removes the pending token for device id.
 func (s *State) RevokeToken(id string) bool {
 	for i, t := range s.EnrollmentTokens {
-		if t.ID == id {
+		if t.ID == id && !t.Enrolled {
 			s.EnrollmentTokens = append(append([]EnrollmentToken(nil), s.EnrollmentTokens[:i]...), s.EnrollmentTokens[i+1:]...)
 			if len(s.EnrollmentTokens) == 0 {
 				s.EnrollmentTokens = nil
@@ -120,10 +128,12 @@ func (s *State) RevokeToken(id string) bool {
 	return false
 }
 
-// EnrollWithToken consumes a token and authorizes the key in request for the
+// EnrollWithToken uses a token to authorize the key in request for the
 // token's device ID and address, with the same checks as approve. It returns
-// the device ID and the new certificate (PEM).
-func (s *State) EnrollWithToken(secret string, request []byte, now time.Time) (string, []byte, error) {
+// the device ID, the certificate (PEM) and whether the state changed. A
+// repeated request with an already used token and the same key returns the
+// issued certificate again without changing the state.
+func (s *State) EnrollWithToken(secret string, request []byte, now time.Time) (string, []byte, bool, error) {
 	s.PruneTokens(now)
 	hash := hashToken(secret)
 	index := -1
@@ -133,25 +143,57 @@ func (s *State) EnrollWithToken(secret string, request []byte, now time.Time) (s
 		}
 	}
 	if index < 0 {
-		return "", nil, ErrTokenInvalid
+		return "", nil, false, ErrTokenInvalid
 	}
 	token := s.EnrollmentTokens[index]
+	if token.Enrolled {
+		peer, ok := s.Config.Peer(token.ID)
+		pub, err := enrollmentPublicKey(token.ID, request)
+		if !ok || err != nil {
+			return "", nil, false, ErrTokenInvalid
+		}
+		cert, err := ParseCert(peer.Cert)
+		if err != nil {
+			return "", nil, false, err
+		}
+		if key, ok := cert.PublicKey.(ed25519.PublicKey); !ok || !key.Equal(pub) {
+			return "", nil, false, ErrTokenInvalid
+		}
+		return token.ID, certPEM(cert.Raw), false, nil
+	}
 	cert, err := s.ApproveEnrollment(token.ID, token.IP, request)
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
-	s.RevokeToken(token.ID) // single use
-	return token.ID, cert, nil
+	s.EnrollmentTokens[index].Enrolled = true
+	return token.ID, cert, true, nil
 }
 
-func (s *State) validateTokens() error {
+// DropTokens removes unused tokens for a device ID or address that is being
+// authorized by other means, so a leftover token cannot re-enroll it later.
+func (s *State) DropTokens(id, ip string) {
+	kept := s.EnrollmentTokens[:0:0]
+	for _, t := range s.EnrollmentTokens {
+		if t.Enrolled || (t.ID != id && t.IP != ip) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		kept = nil
+	}
+	s.EnrollmentTokens = kept
+}
+
+func (s *State) validateTokens(now time.Time) error {
 	if len(s.EnrollmentTokens) > maxTokens {
 		return fmt.Errorf("more than %d enrollment tokens", maxTokens)
 	}
 	seen := map[string]bool{}
 	for _, t := range s.EnrollmentTokens {
 		data, err := hex.DecodeString(t.Hash)
-		if !ValidID(t.ID) || err != nil || len(data) != sha256.Size || seen[t.ID] || seen["ip:"+t.IP] || seen["h:"+t.Hash] {
+		addr, aerr := netip.ParseAddr(t.IP)
+		if !ValidID(t.ID) || err != nil || len(data) != sha256.Size || aerr != nil || !addr.Is4() || addr.String() != t.IP ||
+			t.NotAfter.After(now.Add(MaxTokenTTL+time.Minute)) || seen[t.ID] || seen["ip:"+t.IP] || seen["h:"+t.Hash] {
 			return fmt.Errorf("invalid or duplicate enrollment token for %q", t.ID)
 		}
 		seen[t.ID], seen["ip:"+t.IP], seen["h:"+t.Hash] = true, true, true

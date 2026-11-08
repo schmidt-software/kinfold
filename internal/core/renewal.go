@@ -140,7 +140,18 @@ func (s *State) validateRenewedFrom() error {
 	return nil
 }
 
-// ForgetPeer removes per-peer records that must not outlive the peer.
+// ForgetPeer removes per-peer records that must not outlive the peer,
+// including its enrollment tokens (v0.3 review finding 4).
 func (s *State) ForgetPeer(id string) {
 	delete(s.RenewedFrom, id)
+	kept := s.EnrollmentTokens[:0:0]
+	for _, t := range s.EnrollmentTokens {
+		if t.ID != id {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		kept = nil
+	}
+	s.EnrollmentTokens = kept
 }
