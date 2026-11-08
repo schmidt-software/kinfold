@@ -802,6 +802,14 @@ identities are authenticated and connection counts per device are already
 bounded. Debt-based charging after the read needs no read-size prediction
 and keeps the long-term rate exact.
 
+Amended after the v0.6 pre-release review (#117):
+- Limit values that would switch the limit off are refused: a rate below
+  one byte per second, values that overflow after the suffix is applied,
+  and a burst without a rate.
+- A superseded connection also ends the pauses of its bridge, so its
+  partner endpoint is not held.
+- Buckets and throttle series of removed devices are freed.
+
 **Consequences:** No global bandwidth cap: many devices can still fill the
 uplink together. The bucket state lives in memory, so a controller restart
 refills every bucket. Changing the limit requires a restart. Direct

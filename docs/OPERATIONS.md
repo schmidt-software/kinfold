@@ -196,7 +196,7 @@ traffic stops, because the relay is part of the controller.
 By default a device may use as much relay bandwidth as the controller has.
 `serve -relay-rate 2M` limits every device to 2 MB/s of relayed traffic it
 sends, summed over all its sessions; `-relay-burst` sets the bucket size
-(default one second at the rate, at least 16 KiB). The limit applies to
+(default one second at the rate, at least 16 KiB; it requires `-relay-rate`, and the rate must be 0 or at least one byte per second). The limit applies to
 sessions bridged after the start and does not affect direct sessions. A
 throttled device's TCP sessions slow down; nothing is dropped. Watch
 `kinfold_relay_throttle_delay_milliseconds_total{peer}` to see which devices
