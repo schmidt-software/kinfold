@@ -17,15 +17,13 @@ func activeEndpoints(s *Server) (active, waiting int) {
 }
 
 func TestWaitingEndpointTimesOutAndReleasesSlot(t *testing.T) {
-	old := pairingTimeout
-	pairingTimeout = 100 * time.Millisecond
-	defer func() { pairingTimeout = old }()
 	cfg := pairConfig(t)
 	s, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	s.pairingTimeout = 100 * time.Millisecond
 	left, right := net.Pipe()
 	defer right.Close()
 	done := make(chan struct{})
