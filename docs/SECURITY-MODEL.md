@@ -1,9 +1,9 @@
 # Security model and production requirements
 
-This document describes the state of `v0.2-alpha` and the requirements for a
-production implementation. It is **not a security approval**. Protocol, transport,
-consensus procedure, clock model and concrete lease duration are not yet
-defined. An independent review and operational approval are outstanding.
+This document describes the current state of Kinfold (the version of the
+release it ships with) and the requirements for a production implementation.
+It is **not a security approval**. A consensus procedure for the controller
+state and a secured clock model are not yet defined. An independent review and operational approval are outstanding.
 
 ## Scope of protection and trust boundaries
 
@@ -64,8 +64,7 @@ exchange traffic with a peer for at most one poll interval after the peer's
 controller accepted the change, or for the lease duration if the peer cannot
 reach the controller.
 
-
-The Linux client obtains a member list from the controller over mutually
+The client (Linux or macOS) obtains a member list from the controller over mutually
 authenticated TLS. The additional TLS connection per peer checks certificates
 against the delivered list and the CA. Since v0.4 the list is signed with a
 dedicated configuration key and carries a lease and an issue time; devices
