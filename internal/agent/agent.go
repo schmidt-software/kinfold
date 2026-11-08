@@ -22,6 +22,8 @@ type link struct {
 	peer core.Peer
 	// incoming delivers accepted direct sessions to the link (D-026).
 	incoming chan net.Conn
+	// done is closed when the link stops; late deliveries are refused.
+	done <-chan struct{}
 	// dial reports whether this side dials the peer directly.
 	dial      bool
 	endpoints func(peer string) []string
@@ -169,6 +171,7 @@ func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, 
 				delete(running, p.ID) // unchanged: keep the link and its session
 			} else {
 				linkCtx, linkCancel := context.WithCancel(ctx)
+				l.done = linkCtx.Done()
 				r = &runningLink{link: l, key: key, cancel: linkCancel}
 				workers.Add(1)
 				go func() {
@@ -188,10 +191,8 @@ func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, 
 				table[peerIPv6] = r.link
 			}
 		}
-		for _, r := range running {
-			r.cancel() // removed or changed
-		}
-		running = next
+		// Publish the new links before stopping the old ones, so the
+		// listener never hands a session to a link that is being stopped.
 		routes.Store(&table)
 		fps := make(map[string]*link, len(next))
 		for _, r := range next {
@@ -200,6 +201,10 @@ func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, 
 			}
 		}
 		byFingerprint.Store(&fps)
+		for _, r := range running {
+			r.cancel() // removed or changed
+		}
+		running = next
 		return nil
 	}
 	if err := apply(cfg); err != nil {
@@ -325,6 +330,11 @@ func (l *link) run(ctx context.Context, cred core.Credential, cfg *atomic.Pointe
 	}()
 	var backoff retryBackoff
 	var next net.Conn // a direct session accepted while another one was running
+	defer func() {
+		if next != nil {
+			next.Close()
+		}
+	}()
 	for ctx.Err() == nil {
 		conn, path, err := next, "direct", error(nil)
 		next = nil
@@ -422,7 +432,9 @@ func (l *link) tryDirect(ctx context.Context, cred core.Credential) bool {
 		}
 		select {
 		case l.incoming <- conn:
-		default:
+		case <-ctx.Done():
+			conn.Close()
+		case <-l.done:
 			conn.Close()
 		}
 		return true
@@ -477,12 +489,14 @@ func (l *link) runSession(ctx context.Context, cred core.Credential, conn net.Co
 			}
 			return next, err
 		case incoming := <-l.incoming:
-			if path == "direct" || next != nil {
-				incoming.Close() // keep the running direct session
+			if next != nil {
+				incoming.Close()
 				continue
 			}
+			// The newest direct session wins: the peer only dials again when
+			// it considers the running session dead (finding 6).
 			next = incoming
-			slog.Info("switching peer to the direct path", "peer", l.peer.ID)
+			slog.Info("switching peer to a new direct session", "peer", l.peer.ID, "from", path)
 			cancel()
 		}
 	}
