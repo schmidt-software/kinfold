@@ -13,10 +13,15 @@ Repository language is English (code, comments, docs, CLI output, commits, PRs).
 - `docs/DECISION-LOG.md` — numbered log of every non-trivial decision; add an entry in the same PR as the change
 - `docs/review-v0.1-copilot.md` — consolidated review of the baseline
 - `docs/OPERATIONS.md` — operator guide (upgrades, backup/restore, CA rotation, incidents)
+- `docs/user-guide/{en,de}/<tag>.md` — full user guide per release in English and German (D-038); never edit a released version's guide except for factual errors
 
 ## Workflow
 
 Issue → branch `<issue>-<slug>` → atomic commits → PR → CI green → rebase merge → delete branch. No direct commits to `main`. Details in `CONTRIBUTING.md`. Run the Docker integration test locally before merging anything that touches `internal/agent`, `internal/relay` or the supervisor; note the result in the PR.
+
+## Releases
+
+Every release PR adds `docs/release-notes/<tag>.md` and the user guides `docs/user-guide/en/<tag>.md` and `docs/user-guide/de/<tag>.md`. Write them from the previous guide plus the changes in this release. Generate the appendix with `sh scripts/cli-reference.sh HEAD`. The PR also points the README's user-guide links and the index `docs/user-guide/README.md` at the new tag. `scripts/release.sh` and the release workflow refuse a tag without these files (`scripts/release-docs.sh check <tag>`). The workflow attaches the guides and links them in the release description.
 
 ## Commands
 

@@ -853,3 +853,38 @@ The plist therefore restricts only what launchd can: umask and restarts.
 **Consequences:** The macOS client runs unconfined as root. The plist was
 validated with `plutil` but not loaded in CI. The smoke test still needs a
 person with sudo on a Mac.
+
+## D-038 — 2026-11-08 — active — A user guide for every release
+
+**Decision:** Every tag has a full user guide in English and German:
+`docs/user-guide/en/<tag>.md` and `docs/user-guide/de/<tag>.md`. Each guide
+describes exactly the feature set of its tag and follows one shared
+outline: concepts, installation, controller, devices, rules, operation,
+features, troubleshooting, security and limits. The appendix holds the
+command reference, which `scripts/cli-reference.sh` generates from the
+binary built at the tag.
+
+`scripts/release-docs.sh check <tag>` gates every release. It fails unless
+the release notes and both guides exist and the README links to the
+guides. `scripts/release.sh` runs it, so the release workflow and local
+release builds both refuse a tag without documentation. The workflow
+attaches both guides as release assets (`kinfold-<tag>-user-guide-en.md`
+and `-de.md`, listed in `SHA256SUMS`). It also appends links to them, at
+the tag, to the release description. CI checks that every guide the
+README links to exists. `docs/user-guide/README.md` lists all versions.
+
+The guides for the tags released before this decision (v0.1-copilot to
+v0.5.0-alpha) live on main. Their release descriptions link to them there.
+v0.1-copilot had no release, so it gets one without binaries. Its tag stays
+unchanged (D-020).
+
+**Rationale:** The owner asked for detailed user documentation in German
+and English for every tag, linked from the release and from the README,
+and created with every tag from now on. Writing the text cannot be
+automated without a language model in CI. So the process makes it a
+required part of the release PR and automates everything else: the gate,
+the attachment, the links and the command reference.
+
+**Consequences:** A release PR is larger. Released guides are frozen,
+except for corrections of factual errors. The German guide is a full
+translation, so it has to be kept in step by hand.
