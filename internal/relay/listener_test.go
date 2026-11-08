@@ -2,6 +2,7 @@ package relay
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -225,5 +226,36 @@ func TestNewLimitedListenerRejectsInvalidLimits(t *testing.T) {
 		if _, err := NewLimitedListener(raw, limits); err == nil {
 			t.Errorf("accepted invalid limits %+v", limits)
 		}
+	}
+}
+
+func TestSourceKeyAggregatesIPv6By64(t *testing.T) {
+	for in, want := range map[string]string{
+		"192.0.2.7":            "192.0.2.7",
+		"::ffff:192.0.2.7":     "192.0.2.7",
+		"2001:db8:1:2::1":      "2001:db8:1:2::/64",
+		"2001:db8:1:2:ffff::9": "2001:db8:1:2::/64",
+		"2001:db8:1:3::1":      "2001:db8:1:3::/64",
+		"fe80::1%eth0":         "fe80::/64",
+	} {
+		if got := sourceKey(in); got != want {
+			t.Errorf("sourceKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestLimitedListenerSourceMapIsBounded(t *testing.T) {
+	l := newTestLimitedListener(t, ListenerLimits{Total: 10, PerSource: 4, RatePerSource: 1, BurstPerSource: 4})
+	now := time.Unix(1000, 0)
+	l.now = func() time.Time { return now }
+	for i := 0; i < maxTrackedSources+100; i++ {
+		source := fmt.Sprintf("2001:db8:%x::/64", i)
+		if !l.admit(source) {
+			t.Fatalf("source %d rejected", i)
+		}
+		l.releaseSource(source) // one-shot connection, bucket only partly refilled
+	}
+	if n := len(l.sources); n > maxTrackedSources {
+		t.Fatalf("source map grew to %d entries", n)
 	}
 }
