@@ -199,8 +199,11 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 		client := agent.NewConfigClient(cred)
 		runCtx, cancel := context.WithCancel(ctx)
 		renewed := make(chan core.Credential, 1)
+		var renewing sync.WaitGroup
 		if autoRenew {
+			renewing.Add(1)
 			go func() {
+				defer renewing.Done()
 				renewLoop(runCtx, path, cred, client, renewed)
 				if len(renewed) > 0 {
 					cancel() // stop the tunnel; it restarts below with the new credential
@@ -210,6 +213,9 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 		fetch := func(ctx context.Context, _ core.Credential) (core.Config, string, error) { return client.Fetch(ctx) }
 		err := supervise(runCtx, cred, iface, cfg, id, 2*time.Second, fetchGrace, agent.OpenTunnel, fetch, agent.Run)
 		cancel()
+		// Never exit while a renewal is between request and storage
+		// (change review finding 2); an interrupted one resumes at start.
+		renewing.Wait()
 		client.Close()
 		select {
 		case next := <-renewed:
