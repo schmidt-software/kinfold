@@ -239,6 +239,10 @@ func loadState(dir string, renewServer bool) (*State, error) {
 	if err := ReadJSON(path, &s); err != nil {
 		return nil, err
 	}
+	// States written by v0.1 may hold IPv6 values as typed (upper case,
+	// leading zeros); normalise them instead of refusing to load (change
+	// review finding 9). The next write stores the canonical form.
+	s.Config.canonicalizeIPv6()
 	if err := s.Config.Validate(); err != nil {
 		return nil, err
 	}
