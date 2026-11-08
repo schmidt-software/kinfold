@@ -455,3 +455,32 @@ bypass the relay.
 **Consequences:** Each deferred part stays open as a follow-up issue.
 v0.3.0-alpha changes the controller–client protocol (signed configuration);
 controller and all clients must be upgraded together, as before.
+
+## D-022 — 2026-11-08 — active — Split the post-alpha work into three releases
+
+**Decision:** The work scoped in D-021 ships in three milestones, each with
+its own release:
+
+- **v0.3.0-alpha** — targeted session invalidation and per-peer
+  configuration (#20), metrics (#25), enrollment tokens (#23).
+- **v0.4.0-alpha** — signed configuration with leases (#22), then the direct
+  TCP path (#21).
+- **v0.5.0-alpha** — active/standby controllers (#26), macOS client (#24).
+
+Deferred parts (#62 UDP/NAT traversal, #63 quorum, #64 Windows/mobile) carry
+the label `future` and no milestone.
+
+**Rationale:** The owner asked to split the work into releases where it
+makes sense and to use milestones. The split follows dependencies and risk:
+v0.3 changes operations without touching the trust model; v0.4 introduces
+the new trust model (signed leases) together with the only feature that
+requires it (traffic bypassing the relay); v0.5 builds high availability on
+the signed state from v0.4 and adds a platform. Each release can be tested,
+reviewed and rolled out on its own, and a problem in the riskier v0.4 work
+does not hold back the operational improvements. The order inside v0.3
+moves enrollment tokens (#23) before signed configuration, unlike D-021,
+because it does not depend on it.
+
+**Consequences:** Three protocol-compatibility boundaries instead of one;
+each release notes its upgrade order. D-021 remains valid for the scope of
+each issue.
