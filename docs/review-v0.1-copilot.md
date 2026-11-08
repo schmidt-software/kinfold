@@ -199,3 +199,27 @@ redirected to an impostor. Findings, all fixed in #79:
 | 8 | L | Devices could make peers dial arbitrary addresses. | Advertised addresses must be private; public only as observed. |
 | 9 | L | A controller restart made clients close at once (503). | Shutdown answers are marked and keep the grace period. |
 | 10 | L | Token-enrolled credentials lacked the configuration key. | Sent with the enrollment response over the pinned connection. |
+
+## Review before v0.5.0-alpha
+
+An independent review of `v0.4.0-alpha..55b2f9d` (standby controllers, macOS
+client) found the macOS utun code correct (kernel ABI constants and struct
+layouts, descriptor handling, header translation) and confirmed that only
+registered replica certificates receive the controller state and that a
+standby refuses renewal, enrollment and further replication. Findings, fixed
+in #84, #85 and #86:
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 1 | H | The documented promotion (restart without `-standby`) served the old primary's address and certificate; devices failed hostname verification. | `replica-promote` switches the state to the standby's address with a new server certificate and removes its replica entry (D-030). |
+| 2 | M | `renew-server -server` to a standby's address wrote a state that no longer loaded. | Refused; the result is validated before writing. |
+| 3 | M | Docs claimed devices on different controllers could use the direct path; endpoints are per controller. | Docs corrected (D-032). |
+| 4 | M | A standby with broken replication (or after `replica-remove`) served its last state indefinitely; startup fell back on any error. | `-standby-max-age` (1 h), immediate stop on 403, startup fallback only when unreachable, replication age metric (D-031). |
+| 5 | L | An expired primary server certificate made the standby close with an unmarked 503, dropping device tunnels. | Standby ignores that certificate's expiry. |
+| 6 | L | An unmarked 503 from a broken primary ended the device's tunnel although a standby was healthy. | Devices try the other controllers on 503. |
+| 7 | L | Standby certificates expired without warning or documented renewal. | Certificate warnings and documented renewal. |
+
+A second review of the fixes found three more issues, fixed in #92: a
+standby going stale kept the relay sessions it already carried,
+`replica-promote` could be overwritten by a standby that was still running,
+and promotion did not reject a host name equal to a device ID.
