@@ -4,6 +4,7 @@ package agent
 
 import (
 	"encoding/binary"
+	"errors"
 	"testing"
 )
 
@@ -32,5 +33,14 @@ func TestUtunFamilyHeader(t *testing.T) {
 		if got := netmaskString(bits); got != want {
 			t.Errorf("netmask /%d = %s, want %s", bits, got, want)
 		}
+	}
+}
+
+func TestRouteExists(t *testing.T) {
+	if !routeExists(errors.New("route [-q -n add -inet6 fd88::/64 -interface utun4]: exit status 1: route: writing to routing socket: File exists")) {
+		t.Fatal("existing route not recognised")
+	}
+	if routeExists(errors.New("route [...]: exit status 1: route: writing to routing socket: Network is unreachable")) {
+		t.Fatal("other route error treated as existing route")
 	}
 }

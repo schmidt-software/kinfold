@@ -65,6 +65,10 @@ func runDarwin(name string, args ...string) error {
 
 const ipCommandTimeout = 10 * time.Second
 
+// routeExists reports whether route add failed only because the route is
+// already there.
+func routeExists(err error) bool { return strings.Contains(err.Error(), "File exists") }
+
 // OpenTunnel creates a utun interface with the given addresses (CIDR).
 func OpenTunnel(_ string, addresses []string) (io.ReadWriteCloser, error) {
 	fd, err := syscall.Socket(afSystem, syscall.SOCK_DGRAM, sysprotoControl)
@@ -113,7 +117,8 @@ func OpenTunnel(_ string, addresses []string) (io.ReadWriteCloser, error) {
 			if err := runDarwin("ifconfig", ifname, "inet6", ip, "prefixlen", strconv.Itoa(prefix.Bits()), "up"); err != nil {
 				return nil, err
 			}
-			if err := runDarwin("route", "-q", "-n", "add", "-inet6", prefix.Masked().String(), "-interface", ifname); err != nil {
+			// Assigning the address may already install the prefix route.
+			if err := runDarwin("route", "-q", "-n", "add", "-inet6", prefix.Masked().String(), "-interface", ifname); err != nil && !routeExists(err) {
 				return nil, err
 			}
 		}
