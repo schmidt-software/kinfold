@@ -380,7 +380,7 @@ keeps lock contention bounded without delaying a legitimate retry.
 **Consequences:** One more strict-decoded state field (`renewed_from`);
 `remove-peer` and offline rotation clear it.
 
-## D-019 — 2026-11-08 — active — Republish v0.2-alpha after the reproducibility fix
+## D-019 — 2026-11-08 — superseded by D-020 — Republish v0.2-alpha after the reproducibility fix
 
 **Decision:** The first `v0.2-alpha` release is withdrawn and the tag is
 moved to the commit that fixes the release script (#56); the release is
@@ -397,3 +397,16 @@ instructions fail would.
 **Consequences:** Anyone who fetched the tag in those minutes must
 `git fetch --tags --force`. Tags are not moved again once a release has
 consumers; later fixes get new versions.
+
+## D-020 — 2026-11-08 — active — Publish v0.2.1-alpha instead of moving the tag
+
+**Decision:** `v0.2-alpha` stays published, marked as superseded. The fixed
+release is published as `v0.2.1-alpha`.
+
+**Rationale:** Deleting the release and moving a published tag (D-019) is a
+destructive action the session was not permitted to perform; the owner chose
+the non-destructive path. A new patch version also keeps the rule that
+published tags never move.
+
+**Consequences:** The alpha milestone ships as `v0.2.1-alpha`; the release
+notes of `v0.2-alpha` point to it.
