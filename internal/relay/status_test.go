@@ -98,3 +98,42 @@ func TestStatusMetricsScrapeDuringUpdates(t *testing.T) {
 		t.Fatal("scrape deadlocked with updates")
 	}
 }
+
+// Removing a device frees its bucket, throttle series and status, and a
+// configuration fetch racing with the removal does not bring them back
+// (v0.6 review findings 2 and 3).
+func TestRemovedDeviceStatusIsFreed(t *testing.T) {
+	state := threePeerState(t)
+	s, err := NewForState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetRelayLimit(RelayLimit{Rate: 1 << 20, Burst: 1 << 20})
+	s.mu.Lock()
+	s.limitedEnd(nil, "carol", nil)
+	s.mu.Unlock()
+	next := state.Config.Clone()
+	if err := next.SetRule("bob", "carol", false); err != nil {
+		t.Fatal(err)
+	}
+	next.Peers = next.Peers[:2]
+	if err := s.Update(next, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.seen("carol", time.Now())
+	_, bucket := s.buckets["carol"]
+	_, seen := s.lastSeen["carol"]
+	s.mu.Unlock()
+	if bucket || seen {
+		t.Fatalf("removed device kept bucket=%v lastSeen=%v", bucket, seen)
+	}
+	var out strings.Builder
+	if err := s.Metrics().WritePrometheus(&out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), `peer="carol"`) {
+		t.Fatalf("removed device still has series:\n%s", out.String())
+	}
+}
