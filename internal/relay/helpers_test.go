@@ -30,10 +30,11 @@ func pairConfig(t *testing.T) core.Config {
 	return state.Config
 }
 
-// relayRequest builds a CONNECT request carrying the revision of cfg.
-func relayRequest(t *testing.T, cfg core.Config) *http.Request {
+// relayRequest builds a CONNECT request carrying the revision of the
+// configuration view that device from receives.
+func relayRequest(t *testing.T, cfg core.Config, from string) *http.Request {
 	t.Helper()
-	revision, err := cfg.Revision()
+	revision, err := cfg.ForPeer(from).Revision()
 	if err != nil {
 		t.Fatal(err)
 	}

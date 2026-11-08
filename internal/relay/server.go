@@ -19,6 +19,7 @@ import (
 
 type pending struct {
 	from   string
+	to     string
 	conn   net.Conn
 	match  chan net.Conn
 	cancel chan struct{}
@@ -54,6 +55,7 @@ type Server struct {
 	config         core.Config
 	revision       string            // config.Revision(), computed once per update
 	members        map[string]string // certificate fingerprint -> peer ID
+	views          map[string]view   // peer ID -> configuration that peer sees
 	mu             sync.Mutex
 	waiting        map[string]*pending
 	active         map[net.Conn]endpoint
@@ -67,42 +69,59 @@ func New(config core.Config) (*Server, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	revision, members, err := derive(config)
+	revision, members, views, err := derive(config)
 	if err != nil {
 		return nil, err
 	}
-	return &Server{pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}, nil
+	return &Server{pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, views: views, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}, nil
+}
+
+// view is the configuration one device receives and its revision, which the
+// device presents when it opens a relay session.
+type view struct {
+	config   core.Config
+	revision string
 }
 
 // derive precomputes the per-request lookups for a validated configuration
 // so requests do not parse certificates or marshal the configuration under
 // the relay lock (review R-07).
-func derive(config core.Config) (string, map[string]string, error) {
+func derive(config core.Config) (string, map[string]string, map[string]view, error) {
 	revision, err := config.Revision()
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	members := make(map[string]string, len(config.Peers))
+	views := make(map[string]view, len(config.Peers))
 	for _, peer := range config.Peers {
 		cert, err := core.ParseCert(peer.Cert)
 		if err != nil {
-			return "", nil, fmt.Errorf("peer %s: %w", peer.ID, err)
+			return "", nil, nil, fmt.Errorf("peer %s: %w", peer.ID, err)
 		}
 		members[core.Fingerprint(cert)] = peer.ID
+		v := config.ForPeer(peer.ID)
+		r, err := v.Revision()
+		if err != nil {
+			return "", nil, nil, err
+		}
+		views[peer.ID] = view{config: v, revision: r}
 	}
-	return revision, members, nil
+	return revision, members, views, nil
 }
 
-// Update invalidates all existing sessions on changes or invalid state.
+// Update applies a new configuration. Invalid state closes every session;
+// a valid change closes only the sessions of device pairs whose
+// authorization changed (review R-09).
 func (s *Server) Update(config core.Config, err error) error {
 	var revision string
 	var members map[string]string
+	var views map[string]view
 	config = config.Clone()
 	if err == nil {
 		err = config.Validate()
 	}
 	if err == nil {
-		revision, members, err = derive(config)
+		revision, members, views, err = derive(config)
 	}
 	var stale []net.Conn
 	defer func() { forceClose(stale...) }()
@@ -118,9 +137,12 @@ func (s *Server) Update(config core.Config, err error) error {
 		s.available = false
 		return err
 	}
-	if !s.available || s.revision != revision {
+	if !s.available {
 		stale = s.invalidate()
-		s.config, s.revision, s.members = config, revision, members
+		s.config, s.revision, s.members, s.views = config, revision, members, views
+	} else if s.revision != revision {
+		stale = s.invalidatePairs(s.config, config)
+		s.config, s.revision, s.members, s.views = config, revision, members, views
 	}
 	s.available = true
 	return nil
@@ -228,6 +250,39 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request, id string) 
 	}
 }
 
+// invalidatePairs ends the waiting and active endpoints of every pair whose
+// PairSignature differs between old and next, and returns the connections to
+// close after releasing s.mu. Caller holds s.mu.
+func (s *Server) invalidatePairs(old, next core.Config) []net.Conn {
+	changed := map[[2]string]bool{}
+	pairChanged := func(from, to string) bool {
+		key := [2]string{from, to}
+		if from > to {
+			key = [2]string{to, from}
+		}
+		c, ok := changed[key]
+		if !ok {
+			c = old.PairSignature(from, to) != next.PairSignature(from, to)
+			changed[key] = c
+		}
+		return c
+	}
+	for key, p := range s.waiting {
+		if pairChanged(p.from, p.to) {
+			close(p.cancel)
+			delete(s.waiting, key)
+		}
+	}
+	var stale []net.Conn
+	for conn, e := range s.active {
+		if pairChanged(e.from, e.to) {
+			delete(s.active, conn)
+			stale = append(stale, conn)
+		}
+	}
+	return stale
+}
+
 func (s *Server) Close() {
 	s.mu.Lock()
 	s.available = false
@@ -294,7 +349,7 @@ func identity(r *http.Request, members map[string]string) (string, bool) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	config, members, available, generation := s.config, s.members, s.available, s.generation
+	config, members, views, available, generation := s.config, s.members, s.views, s.available, s.generation
 	s.mu.Unlock()
 	if !available {
 		reject(w, "configuration unavailable", http.StatusServiceUnavailable)
@@ -315,7 +370,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/config":
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(config); err != nil {
+		if err := json.NewEncoder(w).Encode(views[id].config); err != nil {
 			slog.Warn("config response failed", "error", err)
 		}
 	case r.Method == http.MethodPost && r.URL.Path == "/renew":
@@ -349,7 +404,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		reject(w, "configuration changed", http.StatusServiceUnavailable)
 		return
 	}
-	if r.Header.Get("X-Kinfold-Config-Revision") != s.revision {
+	if r.Header.Get("X-Kinfold-Config-Revision") != s.views[from].revision {
 		s.mu.Unlock()
 		reject(w, "current configuration required", http.StatusConflict)
 		return
@@ -359,6 +414,10 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		reject(w, "peer pair not authorized", http.StatusForbidden)
 		return
 	}
+	// Remember the pair's authorization; if it changes before this endpoint
+	// is queued, the endpoint must not be used (sessions of unchanged pairs
+	// survive configuration changes, so the generation alone is not enough).
+	pairSig := s.config.PairSignature(from, to)
 	// The authenticated device reconnects for this ordered pair, so any
 	// session it still holds for the pair is stale (crash, NAT timeout).
 	// Supersede it instead of rejecting the reconnect until TCP keepalive
@@ -422,7 +481,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	// device may have superseded this one; then it must not become the
 	// waiter (change review finding 3).
 	_, stillActive := s.active[conn]
-	if !s.available || s.generation != generation || !stillActive {
+	if !s.available || s.generation != generation || !stillActive || s.config.PairSignature(from, to) != pairSig {
 		s.mu.Unlock()
 		forceClose(conn)
 		s.forget(conn)
@@ -435,7 +494,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		s.mu.Unlock()
 		return
 	}
-	p := &pending{from: from, conn: conn, match: make(chan net.Conn, 1), cancel: make(chan struct{})}
+	p := &pending{from: from, to: to, conn: conn, match: make(chan net.Conn, 1), cancel: make(chan struct{})}
 	var replaced net.Conn
 	if old := s.waiting[key]; old != nil {
 		// Never overwrite a waiter without releasing it; its goroutine would

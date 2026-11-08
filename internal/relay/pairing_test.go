@@ -28,7 +28,7 @@ func TestWaitingEndpointTimesOutAndReleasesSlot(t *testing.T) {
 	defer right.Close()
 	done := make(chan struct{})
 	go func() {
-		s.connect(&blockingHijacker{conn: left, header: make(http.Header)}, relayRequest(t, cfg), "alice", "bob", 0)
+		s.connect(&blockingHijacker{conn: left, header: make(http.Header)}, relayRequest(t, cfg, "alice"), "alice", "bob", 0)
 		close(done)
 	}()
 	reader := bufio.NewReader(right)
@@ -86,7 +86,7 @@ func TestRelayRejectsEarlyData(t *testing.T) {
 	defer right.Close()
 	done := make(chan struct{})
 	go func() {
-		s.connect(&earlyDataHijacker{blockingHijacker{conn: left, header: make(http.Header)}}, relayRequest(t, cfg), "alice", "bob", 0)
+		s.connect(&earlyDataHijacker{blockingHijacker{conn: left, header: make(http.Header)}}, relayRequest(t, cfg, "alice"), "alice", "bob", 0)
 		close(done)
 	}()
 	select {
@@ -112,7 +112,7 @@ func TestPairedEndpointsBridgeAndRelease(t *testing.T) {
 	defer bob.Close()
 	done := make(chan struct{}, 2)
 	go func() {
-		s.connect(&blockingHijacker{conn: aliceRelay, header: make(http.Header)}, relayRequest(t, cfg), "alice", "bob", 0)
+		s.connect(&blockingHijacker{conn: aliceRelay, header: make(http.Header)}, relayRequest(t, cfg, "alice"), "alice", "bob", 0)
 		done <- struct{}{}
 	}()
 	aliceReader := bufio.NewReader(alice)
@@ -121,7 +121,7 @@ func TestPairedEndpointsBridgeAndRelease(t *testing.T) {
 	}
 	aliceReader.ReadString('\n') // blank line ending the response
 	go func() {
-		s.connect(&blockingHijacker{conn: bobRelay, header: make(http.Header)}, relayRequest(t, cfg), "bob", "alice", 0)
+		s.connect(&blockingHijacker{conn: bobRelay, header: make(http.Header)}, relayRequest(t, cfg, "bob"), "bob", "alice", 0)
 		done <- struct{}{}
 	}()
 	bobReader := bufio.NewReader(bob)
@@ -173,7 +173,7 @@ func TestSupersededConnectionDoesNotBecomeWaiter(t *testing.T) {
 	slow := &gatedConn{Conn: left1, gate: make(chan struct{})}
 	done1 := make(chan struct{})
 	go func() {
-		s.connect(&blockingHijacker{conn: slow, header: make(http.Header)}, relayRequest(t, cfg), "alice", "bob", 0)
+		s.connect(&blockingHijacker{conn: slow, header: make(http.Header)}, relayRequest(t, cfg, "alice"), "alice", "bob", 0)
 		close(done1)
 	}()
 	waitFor := func(what string, cond func() bool) {
@@ -193,7 +193,7 @@ func TestSupersededConnectionDoesNotBecomeWaiter(t *testing.T) {
 	defer right2.Close()
 	done2 := make(chan struct{})
 	go func() {
-		s.connect(&blockingHijacker{conn: left2, header: make(http.Header)}, relayRequest(t, cfg), "alice", "bob", 0)
+		s.connect(&blockingHijacker{conn: left2, header: make(http.Header)}, relayRequest(t, cfg, "alice"), "alice", "bob", 0)
 		close(done2)
 	}()
 	reader := bufio.NewReader(right2)

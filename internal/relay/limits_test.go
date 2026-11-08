@@ -39,7 +39,7 @@ func TestSlowRelayResponseDoesNotBlockRevocation(t *testing.T) {
 	writer := &blockingHijacker{conn: left, header: make(http.Header)}
 	done := make(chan struct{})
 	go func() {
-		s.connect(writer, relayRequest(t, cfg), "alice", "bob", 0)
+		s.connect(writer, relayRequest(t, cfg, "alice"), "alice", "bob", 0)
 		close(done)
 	}()
 	deadline := time.Now().Add(time.Second)
@@ -153,7 +153,7 @@ func TestRelayReconnectSupersedesStaleSession(t *testing.T) {
 	if !roots.AppendCertsFromPEM(alice.CA) {
 		t.Fatal("invalid CA")
 	}
-	revision, err := state.Config.Revision()
+	revision, err := state.Config.ForPeer("alice").Revision()
 	if err != nil {
 		t.Fatal(err)
 	}
