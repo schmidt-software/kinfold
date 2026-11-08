@@ -1,7 +1,7 @@
 # Architecture decisions
 
-As of 2026-11-07. The decisions describe the current prototype, not an
-assurance of production readiness. Decisions made during further development
+As of 2026-11-08 (`v0.2-alpha`). The decisions describe the current
+implementation, not an assurance of production readiness. Decisions made during further development
 are logged chronologically in [DECISION-LOG.md](DECISION-LOG.md).
 
 ## 1. Standalone layer-3 MVP
@@ -76,10 +76,13 @@ The periodic configuration fetch runs alongside agent monitoring; at most one fe
 
 ## Next milestones
 
-1. Prepare security model and independent audit: locally generated device keys, separate controller/relay roles, signed and versioned configuration, key rotation, expiry and time-bound revocation.
-2. Authenticated online management with controlled configuration updates; binding tests for revocation, offline behaviour and restarts. Add quotas, limits, metrics and secure service management.
-3. Evaluate a separate UDP data path with a proven transport implementation, rendezvous and NAT traversal; keep the relay as fallback. Test direct and relay paths and NAT scenarios automatically.
-4. IPv6 beyond the experimental ULA unicast, routes and subnet gateways; macOS and Windows clients. Ethernet/multicast/bridging only as a separate, carefully bounded follow-up project.
+Tracked as GitHub issues labelled `post-alpha`:
+
+1. Targeted session invalidation, per-peer configuration and hot-applied policy changes (#20).
+2. Direct peer-to-peer data path with UDP and NAT traversal, relay as fallback (#21).
+3. Signed, versioned configuration and authorization leases with rollback protection (#22).
+4. Online enrollment with one-time tokens (#23).
+5. Non-Linux clients (#24), metrics (#25), controller high availability (#26).
 
 ## 6. Optional IPv6 over existing peer sessions
 

@@ -1,7 +1,7 @@
 # Security model and production requirements
 
-This document describes the experimental state and the requirements for a
-future implementation. It is **not a security approval**. Protocol, transport,
+This document describes the state of `v0.2-alpha` and the requirements for a
+production implementation. It is **not a security approval**. Protocol, transport,
 consensus procedure, clock model and concrete lease duration are not yet
 defined. An independent review and operational approval are outstanding.
 
@@ -26,7 +26,31 @@ encryption nor local policy enforces deletion of such data. A compromised
 device can also generate valid packets within its rights; their content is not
 authorized by this VPN.
 
-## Existing prototype
+## Alpha hardening summary
+
+Compared with the `v0.1-copilot` prototype, the alpha closes the findings of
+the code review (`docs/review-v0.1-copilot.md`):
+
+- The controller bounds every connection phase, closes rejected connections,
+  limits connections per source address and speaks HTTP/1.1 only, so neither
+  a removed device nor an unauthenticated client can pin its connection
+  slots (decision D-011).
+- A configuration without a policy denies all traffic; the relay always
+  requires the current configuration revision (D-012).
+- Device certificates in the state must be leaf, Ed25519, client+server
+  authentication only, with the device ID as name; the overlay network must
+  be private address space (D-014).
+- Secrets readable by other users are refused; the state directory itself is
+  locked against concurrent writers.
+- Devices renew their certificates online with locally generated keys
+  (D-015); the controller can move to a new address without re-enrollment
+  (D-017).
+- Service units run the controller without capabilities and the client with
+  only `CAP_NET_ADMIN` (D-016).
+
+Known residual risks are listed below and in the README's "Known limits".
+
+## Current implementation
 
 The Linux client obtains a member list from the controller over mutually
 authenticated TLS. The additional TLS connection per peer checks certificates
