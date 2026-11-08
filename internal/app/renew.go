@@ -144,6 +144,7 @@ func renewCredential(ctx context.Context, path string, cred core.Credential, cli
 	if err != nil {
 		return cred, false, fmt.Errorf("controller returned an unusable certificate: %w", err)
 	}
+	renewed.ConfigKey = cred.ConfigKey
 	if err := core.WriteJSON(path, renewed); err != nil {
 		return cred, false, fmt.Errorf("store renewed credential (the pending renewal in %s allows a retry): %w", pendingPath(path), err)
 	}
@@ -410,4 +411,47 @@ func joinWithToken(ctx context.Context, server, fingerprint, id, tokenFile, out 
 		return core.Credential{}, err
 	}
 	return core.CompleteEnrollment(server, ca, cert, pending.Key)
+}
+
+// pinConfigKey fetches the controller's configuration key over the
+// authenticated connection for a credential from before v0.4 and stores it
+// in the credential, so later runs verify against the pinned key (D-025).
+func pinConfigKey(ctx context.Context, path string, cred core.Credential) (core.Credential, error) {
+	if len(cred.ConfigKey) != 0 {
+		return cred, nil
+	}
+	client := agent.NewConfigClient(cred)
+	defer client.Close()
+	key, err := client.FetchConfigKey(ctx)
+	if err != nil {
+		return cred, fmt.Errorf("fetch configuration key: %w", err)
+	}
+	cred.ConfigKey = key
+	if err := core.WriteJSON(path, cred); err != nil {
+		// E.g. a credential bind-mounted as a single file cannot be replaced.
+		// The key is still used for this run and fetched again next time.
+		slog.Warn("could not store the configuration key in the credential; using it for this run only", "path", path, "error", err)
+		return cred, nil
+	}
+	slog.Info("pinned the controller's configuration signing key in the credential")
+	return cred, nil
+}
+
+// addConfigKey adds a configuration signing key to a state written before
+// v0.4 (D-025).
+func addConfigKey(dir string) (*core.State, error) {
+	s, lock, err := loadWritableState(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if s.ConfigKey == nil {
+		if s.ConfigKey, err = core.NewConfigKey(); err != nil {
+			return nil, err
+		}
+		if err := core.WriteJSON(filepath.Join(dir, "state.json"), s); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
 }

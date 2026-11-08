@@ -25,7 +25,7 @@ func TestControllerWaitsForShutdownAndReportsTimeout(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			handler, err := relay.New(state.Config)
+			handler, err := relay.NewForState(state)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +122,7 @@ func TestControllerStartupFailureClosesListenerAndWatcher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.New(state.Config)
+	handler, err := relay.NewForState(state)
 	if err != nil {
 		t.Fatal(err)
 	}

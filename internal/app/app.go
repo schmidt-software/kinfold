@@ -652,7 +652,14 @@ func Run(args []string) error {
 		if s.Config.Policy == nil {
 			return fmt.Errorf("state has no policy section (pre-policy format); run 'kinfold policy-enable -data %s' and add allow rules before serving", *dir)
 		}
-		handler, err := relay.New(s.Config)
+		if s.ConfigKey == nil {
+			// States from before v0.4 have no configuration signing key.
+			if s, err = addConfigKey(*dir); err != nil {
+				return err
+			}
+			slog.Info("generated a configuration signing key for this controller")
+		}
+		handler, err := relay.NewForState(s)
 		if err != nil {
 			return err
 		}
@@ -726,6 +733,12 @@ func Run(args []string) error {
 		if args[0] == "run" && *autoRenew {
 			var err error
 			if cred, err = resumeRenewal(ctx, *path, cred); err != nil {
+				return err
+			}
+		}
+		if args[0] == "run" {
+			var err error
+			if cred, err = pinConfigKey(ctx, *path, cred); err != nil {
 				return err
 			}
 		}

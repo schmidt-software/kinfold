@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -82,7 +83,7 @@ func runHarness(t *testing.T, h *resilienceHarness, cred core.Credential, grace 
 	ctx, stop := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- supervise(ctx, cred, "kf0", h.cfg, "alice", 5*time.Millisecond, grace, h.open, h.fetch, h.run)
+		result <- supervise(ctx, cred, "kf0", h.cfg, "alice", 5*time.Millisecond, grace, nil, h.open, h.fetch, h.run)
 	}()
 	return func() {
 		stop()
@@ -178,7 +179,7 @@ func TestSuperviseHandsPolicyChangesToRunningAgent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- supervise(ctx, cred, "kf0", s.Config, "alice", 5*time.Millisecond, time.Hour, open, fetch, run)
+		result <- supervise(ctx, cred, "kf0", s.Config, "alice", 5*time.Millisecond, time.Hour, nil, open, fetch, run)
 	}()
 	defer func() { cancel(); <-result }()
 	eventually(t, "initial tunnel", func() bool { return opens.Load() == 1 })
@@ -197,5 +198,35 @@ func TestSuperviseHandsPolicyChangesToRunningAgent(t *testing.T) {
 	}
 	if opens.Load() != 1 {
 		t.Fatalf("tunnel reopened %d times for a policy-only change", opens.Load()-1)
+	}
+}
+
+func TestSuperviseClosesTunnelWhenLeaseExpires(t *testing.T) {
+	h, cred := newResilienceHarness(t)
+	var lease atomic.Int64
+	lease.Store(time.Now().Add(time.Hour).UnixNano())
+	leaseUntil := func() time.Time { return time.Unix(0, lease.Load()) }
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- supervise(ctx, cred, "kf0", h.cfg, "alice", 5*time.Millisecond, time.Hour, leaseUntil, h.open, h.fetch, h.run)
+	}()
+	defer func() { cancel(); <-result }()
+	eventually(t, "initial tunnel", func() bool { return h.opens.Load() == 1 })
+	h.set(func() { h.failing = true }) // no fresh configuration arrives
+	lease.Store(time.Now().Add(-time.Second).UnixNano())
+	eventually(t, "tunnel closed at lease expiry", func() bool { return h.stops.Load() == 1 })
+}
+
+func TestSeenWatermarkPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alice.json")
+	if !readSeen(path).IsZero() {
+		t.Fatal("watermark without file")
+	}
+	now := time.Now().Truncate(time.Microsecond)
+	writeSeen(path, now)
+	writeSeen(path, now.Add(-time.Hour)) // never moves backwards
+	if got := readSeen(path); !got.Equal(now) {
+		t.Fatalf("watermark %v, want %v", got, now)
 	}
 }

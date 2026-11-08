@@ -35,7 +35,7 @@ func startTestController(t *testing.T, timeouts serverTimeouts) testController {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.New(state.Config)
+	handler, err := relay.NewForState(state)
 	if err != nil {
 		t.Fatal(err)
 	}
