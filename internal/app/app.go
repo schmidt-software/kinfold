@@ -677,7 +677,7 @@ func Run(args []string) error {
 			return err
 		}
 		handler.SetRenewer(controllerRenewer(*dir, time.Now))
-		tokens := newTokenCache(s)
+		tokens := newTokenCache(*dir, s)
 		handler.SetEnroller(controllerEnroller(*dir, time.Now, tokens))
 		server := newControllerServer(handler, tlsCfg, defaultServerTimeouts)
 		for _, warning := range s.CertificateWarnings(time.Now(), 30*24*time.Hour) {

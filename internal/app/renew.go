@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/schmidt-software/kinfold/internal/agent"
@@ -218,29 +218,78 @@ func fetchAfterRenewal(ctx context.Context, cred core.Credential) (core.Config, 
 	return core.Config{}, "", fmt.Errorf("controller did not accept the renewed certificate: %w", lastErr)
 }
 
-// tokenCache holds the hashes of the tokens in the state the controller
-// last loaded, so an unauthenticated request with an unknown token is
-// refused without taking the state lock (v0.3 review finding 1). The
-// watcher refreshes it about once per second.
+// tokenCache holds the hashes of the pending tokens so that a request with
+// an unknown token is refused without taking the state lock (v0.3 review
+// finding 1). On a miss it checks whether state.json changed since the last
+// load (a stat) and only then re-reads it, without the lock, so a token
+// issued a moment ago works immediately while unknown tokens cost a stat.
 type tokenCache struct {
-	hashes atomic.Pointer[map[string]bool]
+	path   string
+	mu     sync.Mutex
+	hashes map[string]bool
+	stamp  fileStamp
 }
 
-func newTokenCache(s *core.State) *tokenCache {
-	c := &tokenCache{}
-	c.update(s)
+type fileStamp struct {
+	mod  time.Time
+	size int64
+	ino  uint64
+}
+
+func stampOf(info os.FileInfo) fileStamp {
+	s := fileStamp{mod: info.ModTime(), size: info.Size()}
+	if st, ok := info.Sys().(interface{ Ino() uint64 }); ok {
+		s.ino = st.Ino()
+	}
+	return s
+}
+
+func newTokenCache(dir string, s *core.State) *tokenCache {
+	c := &tokenCache{path: filepath.Join(dir, "state.json")}
+	if info, err := os.Stat(c.path); err == nil {
+		c.stamp = stampOf(info)
+	}
+	c.set(s)
 	return c
 }
 
-func (c *tokenCache) update(s *core.State) {
+func (c *tokenCache) set(s *core.State) {
 	m := make(map[string]bool, len(s.EnrollmentTokens))
 	for _, t := range s.EnrollmentTokens {
 		m[t.Hash] = true
 	}
-	c.hashes.Store(&m)
+	c.hashes = m
 }
 
-func (c *tokenCache) has(secret string) bool { return (*c.hashes.Load())[core.TokenHash(secret)] }
+// update records a state the caller has just loaded or written.
+func (c *tokenCache) update(s *core.State) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if info, err := os.Stat(c.path); err == nil {
+		c.stamp = stampOf(info)
+	}
+	c.set(s)
+}
+
+func (c *tokenCache) has(secret string) bool {
+	hash := core.TokenHash(secret)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.hashes[hash] {
+		return true
+	}
+	info, err := os.Stat(c.path)
+	if err != nil || stampOf(info) == c.stamp {
+		return false
+	}
+	s, err := core.LoadState(filepath.Dir(c.path))
+	if err != nil {
+		return false
+	}
+	c.stamp = stampOf(info)
+	c.set(s)
+	return c.hashes[hash]
+}
 
 // controllerEnroller consumes enrollment tokens on the controller under the
 // state lock (D-024).
