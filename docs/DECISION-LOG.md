@@ -410,3 +410,48 @@ published tags never move.
 
 **Consequences:** The alpha milestone ships as `v0.2.1-alpha`; the release
 notes of `v0.2-alpha` point to it.
+
+## D-021 — 2026-11-08 — active — Scope of v0.3.0-alpha
+
+**Decision:** The post-alpha issues are implemented in this order and scope:
+
+1. #20 — targeted relay invalidation (only sessions whose endpoints or
+   pair rules changed), per-peer configuration (each device receives only
+   the rules that concern it, with a per-peer revision), policy-only
+   changes applied without recreating the TUN device.
+2. #25 — Prometheus text-format metrics for controller and client on a
+   separate, loopback-only listener.
+3. #22 — configuration signed by a dedicated Ed25519 signing key (not the
+   TLS CA key), carrying a lease (`not_after`) and a monotonically
+   increasing serial. Clients verify the signature, persist the highest
+   serial seen (rollback protection on the device) and fail closed when the
+   lease expires. No quorum commit.
+4. #23 — short-lived single-use enrollment tokens bound to device ID and
+   address; online enrollment over TLS with the controller CA pinned by
+   fingerprint.
+5. #21 — a direct **TCP** path between devices using the same inner mutual
+   TLS when a device is reachable (LAN or public address), with the relay as
+   fallback. Revocation on the direct path relies on the signed leases of
+   #22. UDP transport and NAT hole punching are deferred.
+6. #26 — active/standby controllers: the standby replicates the signed
+   state, clients know several controller addresses and fail over; an
+   administrator promotes the standby. No quorum or automatic leader
+   election.
+7. #24 — a platform-neutral TUN interface and a macOS client (utun). Windows
+   (requires the external Wintun driver) and mobile platforms are deferred.
+
+**Rationale:** The rules from D-007 (standard library only) and
+DECISIONS §2 (no custom cryptography) stay. An encrypted UDP transport
+would require either an external module (QUIC/DTLS/WireGuard
+implementations) or a self-designed datagram protocol; both contradict
+those rules, so the direct path uses TCP+TLS. A replicated quorum needs a
+consensus implementation that cannot be built and verified responsibly
+within this milestone; active/standby removes the single point of failure
+for availability while the revocation contract keeps documenting that a
+quorum commit is missing. Signed leases come before the direct path because
+the relay-only revocation argument (D-013) no longer holds once traffic can
+bypass the relay.
+
+**Consequences:** Each deferred part stays open as a follow-up issue.
+v0.3.0-alpha changes the controller–client protocol (signed configuration);
+controller and all clients must be upgraded together, as before.
