@@ -31,6 +31,9 @@ type State struct {
 	RenewedFrom map[string]string `json:"renewed_from,omitempty"`
 	// EnrollmentTokens are pending single-use online enrollments (D-024).
 	EnrollmentTokens []EnrollmentToken `json:"enrollment_tokens,omitempty"`
+	// ConfigKey signs the configuration served to devices (D-025). It is
+	// separate from the CA key so it can be moved or rotated on its own.
+	ConfigKey []byte `json:"config_key,omitempty"`
 }
 
 func serial() (*big.Int, error) {
@@ -128,7 +131,11 @@ func NewState(address, network string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &State{Server: address, CA: certPEM(der), CAKey: caKey, ServerCert: certPEM(serverDER), ServerKey: serverKey, Config: cfg}, nil
+	configKey, err := NewConfigKey()
+	if err != nil {
+		return nil, err
+	}
+	return &State{Server: address, CA: certPEM(der), CAKey: caKey, ServerCert: certPEM(serverDER), ServerKey: serverKey, Config: cfg, ConfigKey: configKey}, nil
 }
 
 func (s *State) AddPeer(id, ip string) (Credential, error) {
@@ -144,7 +151,11 @@ func (s *State) AddPeer(id, ip string) (Credential, error) {
 	if err != nil {
 		return Credential{}, err
 	}
-	return Credential{Server: s.Server, CA: s.CA, Cert: certPEM(der), Key: priv}, nil
+	cred := Credential{Server: s.Server, CA: s.CA, Cert: certPEM(der), Key: priv}
+	if pub, err := s.ConfigPublicKey(); err == nil {
+		cred.ConfigKey = pub
+	}
+	return cred, nil
 }
 
 func (s *State) addPeerPublicKey(id, ip string, pub ed25519.PublicKey) ([]byte, error) {
@@ -256,6 +267,11 @@ func loadState(dir string, renewServer bool) (*State, error) {
 	}
 	if err := s.validateTokens(time.Now()); err != nil {
 		return nil, err
+	}
+	if s.ConfigKey != nil {
+		if _, err := ParseConfigKey(s.ConfigKey); err != nil {
+			return nil, fmt.Errorf("configuration signing key: %w", err)
+		}
 	}
 	if err := s.validatePKI(renewServer); err != nil {
 		return nil, fmt.Errorf("invalid controller PKI: %w", err)
