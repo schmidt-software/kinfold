@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="docs/assets/logo.png" alt="Kinfold logo: a ring of six network nodes joined through a central relay core" width="256">
-</p>
+<img src="docs/assets/banner.png" alt="Kinfold — self-hosted overlay network: a ring of six network nodes joined through a central relay core" width="100%">
 
 # Kinfold
 
