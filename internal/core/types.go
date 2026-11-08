@@ -346,6 +346,20 @@ func SyncParentDir(path string) error {
 	return nil
 }
 
+// canonicalizeIPv6 rewrites parseable IPv6 prefixes and addresses in
+// canonical form. Values that do not parse, or prefixes with host bits, are
+// left alone so Validate still rejects them.
+func (c *Config) canonicalizeIPv6() {
+	if prefix, err := netip.ParsePrefix(c.Network6); err == nil && prefix == prefix.Masked() {
+		c.Network6 = prefix.String()
+	}
+	for i := range c.Peers {
+		if ip, err := netip.ParseAddr(c.Peers[i].IPv6); err == nil {
+			c.Peers[i].IPv6 = ip.String()
+		}
+	}
+}
+
 // Clone returns a deep copy, so a holder of the copy is not affected by
 // later in-place changes to the original's slices or policy.
 func (c Config) Clone() Config {

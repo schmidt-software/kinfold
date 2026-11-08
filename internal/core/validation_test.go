@@ -243,3 +243,25 @@ func TestSetRuleDoesNotMutateSharedSlices(t *testing.T) {
 		t.Fatalf("SetRule edited a previously shared service slice: %v", services)
 	}
 }
+
+func TestLoadStateCanonicalizesLegacyIPv6(t *testing.T) {
+	dir := privateTempDir(t)
+	s, err := NewState("localhost:8443", "10.77.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddPeer("alice", "10.77.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	s.Config.Network6, s.Config.Peers[0].IPv6 = "FD77:0001::/64", "FD77:1:0:0:0:0:0:1"
+	if err := WriteJSON(dir+"/state.json", s); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadState(dir)
+	if err != nil {
+		t.Fatalf("v0.1-style IPv6 state did not load: %v", err)
+	}
+	if loaded.Config.Network6 != "fd77:1::/64" || loaded.Config.Peers[0].IPv6 != "fd77:1::1" {
+		t.Fatalf("not canonicalised: %q %q", loaded.Config.Network6, loaded.Config.Peers[0].IPv6)
+	}
+}
