@@ -50,7 +50,7 @@ Commands:
   serve        Run the controller and encrypted relay
   status       Show the authorized network configuration
   check-config Compare the on-disk and loaded controller configuration
-  run          Run the Linux TUN client
+  run          Run the client tunnel (Linux and macOS)
   token        Issue a single-use online enrollment token (controller)
   token-list   List pending enrollment tokens
   token-revoke Revoke a pending enrollment token
@@ -777,12 +777,19 @@ func Run(args []string) error {
 	case "status", "run":
 		f := flags(args[0])
 		path := f.String("credential", "", "private peer credential file")
-		iface := f.String("interface", "kf0", "new TUN interface name (Linux only; macOS picks utunN)")
-		metricsAddr := f.String("metrics", "", "serve Prometheus metrics on this loopback host:port (run only; disabled when empty)")
-		autoRenew := f.Bool("auto-renew", true, "renew the device certificate automatically before it expires (run only)")
-		directListen := f.String("direct-listen", "", "accept direct peer sessions on this host:port, e.g. :51900 (run only; empty disables)")
-		directDial := f.Bool("direct-dial", true, "dial peers that accept direct sessions before falling back to the relay (run only)")
-		logging := addLogFlags(f)
+		// status only reads the configuration; the tunnel options exist for
+		// run alone, so status -h does not list them.
+		iface, metricsAddr, directListen := new(string), new(string), new(string)
+		autoRenew, directDial := new(bool), new(bool)
+		var logging logFlags
+		if args[0] == "run" {
+			iface = f.String("interface", "kf0", "new TUN interface name (Linux only; macOS picks utunN)")
+			metricsAddr = f.String("metrics", "", "serve Prometheus metrics on this loopback host:port (disabled when empty)")
+			autoRenew = f.Bool("auto-renew", true, "renew the device certificate automatically before it expires")
+			directListen = f.String("direct-listen", "", "accept direct peer sessions on this host:port, e.g. :51900 (empty disables)")
+			directDial = f.Bool("direct-dial", true, "dial peers that accept direct sessions before falling back to the relay")
+			logging = addLogFlags(f)
+		}
 		if err := f.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -949,7 +956,7 @@ func Run(args []string) error {
 			return err
 		}
 		fmt.Printf("Enrollment token for %s (%s), valid until %s, single use:\n\n  %s\n\n", *id, *ip, s.EnrollmentTokens[len(s.EnrollmentTokens)-1].NotAfter.Format(time.RFC3339), secret)
-		fmt.Printf("Give the device the token and this command over a confidential channel; the device reads the token from standard input so it does not appear in process lists:\n\n  kinfold join -server %s -ca-sha256 %s -id %s -token-file - -out %s.json\n\n", s.Server, caFP, *id, *id)
+		fmt.Printf("Give the device the token and this command over a confidential channel; the device reads the token from standard input so it does not appear in process lists:\n\n  kinfold join -server %s -ca-sha256 %s -id %s -token-file - -out %s.json\n\n(Use the name or path of the binary on the device instead of kinfold.)\n\n", s.Server, caFP, *id, *id)
 		fmt.Println("The token is shown only once; revoke it with token-revoke if it leaks.")
 		return nil
 	case "token-list":
