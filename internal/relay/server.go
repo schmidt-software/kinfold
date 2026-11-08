@@ -43,20 +43,21 @@ var ErrBusy = errors.New("controller busy")
 
 const maxRenewalRequestBytes = 64 << 10
 
-// pairingTimeout bounds how long a relay endpoint waits for its partner.
-var pairingTimeout = 30 * time.Second
+// defaultPairingTimeout bounds how long a relay endpoint waits for its partner.
+const defaultPairingTimeout = 30 * time.Second
 
 type Server struct {
-	renew      Renewer
-	config     core.Config
-	revision   string            // config.Revision(), computed once per update
-	members    map[string]string // certificate fingerprint -> peer ID
-	mu         sync.Mutex
-	waiting    map[string]*pending
-	active     map[net.Conn]endpoint
-	available  bool
-	generation uint64
-	closed     bool
+	renew          Renewer
+	pairingTimeout time.Duration
+	config         core.Config
+	revision       string            // config.Revision(), computed once per update
+	members        map[string]string // certificate fingerprint -> peer ID
+	mu             sync.Mutex
+	waiting        map[string]*pending
+	active         map[net.Conn]endpoint
+	available      bool
+	generation     uint64
+	closed         bool
 }
 
 func New(config core.Config) (*Server, error) {
@@ -68,7 +69,7 @@ func New(config core.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{config: config, revision: revision, members: members, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}, nil
+	return &Server{pairingTimeout: defaultPairingTimeout, config: config, revision: revision, members: members, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}, nil
 }
 
 // derive precomputes the per-request lookups for a validated configuration
@@ -385,7 +386,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	p := &pending{from: from, conn: conn, match: make(chan net.Conn, 1), cancel: make(chan struct{})}
 	s.waiting[key] = p
 	s.mu.Unlock()
-	timer := time.NewTimer(pairingTimeout)
+	timer := time.NewTimer(s.pairingTimeout)
 	defer timer.Stop()
 	select {
 	case peerConn := <-p.match:
