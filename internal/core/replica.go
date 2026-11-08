@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"strings"
@@ -35,6 +36,28 @@ type ReplicaCredential struct {
 }
 
 const maxReplicas = 8
+
+// CertificateWarnings lists the standby's own certificates (replication
+// client and server) that are expired or expire within window. Renew them
+// with replica-remove and replica-add on the primary.
+func (c ReplicaCredential) CertificateWarnings(now time.Time, window time.Duration) []string {
+	var warnings []string
+	for _, item := range []struct {
+		name string
+		pem  []byte
+	}{{"standby replication", c.Cert}, {"standby server", c.ServerCert}} {
+		if block, _ := pem.Decode(item.pem); block != nil {
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				continue
+			}
+			if w := expiryWarning(item.name, cert, now, window); w != "" {
+				warnings = append(warnings, w)
+			}
+		}
+	}
+	return warnings
+}
 
 // AddReplica registers a standby controller reachable at address.
 func (s *State) AddReplica(id, address string) (ReplicaCredential, error) {
