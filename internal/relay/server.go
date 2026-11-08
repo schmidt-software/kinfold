@@ -54,7 +54,8 @@ type Server struct {
 	metrics        *metrics.Registry
 	renew          Renewer
 	enroll         Enroller
-	signer         ed25519.PrivateKey // signs /config responses (D-025)
+	signer         ed25519.PrivateKey      // signs /config responses (D-025)
+	endpoints      map[string]registration // direct-path endpoints by peer ID (D-026)
 	lease          time.Duration
 	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
 	renewInterval  time.Duration
@@ -508,7 +509,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.reject(w, "configuration signing is not configured", http.StatusServiceUnavailable)
 			return
 		}
-		env, err := core.SignConfig(s.signer, id, views[id].config, time.Now(), s.lease)
+		now := time.Now()
+		s.mu.Lock()
+		s.register(id, r, now)
+		endpoints := s.endpointsFor(id, views[id].config, now)
+		s.mu.Unlock()
+		env, err := core.SignConfig(s.signer, id, views[id].config, endpoints, now, s.lease)
 		if err != nil {
 			slog.Error("signing configuration failed", "error", err)
 			s.reject(w, "configuration unavailable", http.StatusInternalServerError)
