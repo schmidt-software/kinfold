@@ -888,3 +888,25 @@ the attachment, the links and the command reference.
 **Consequences:** A release PR is larger. Released guides are frozen,
 except for corrections of factual errors. The German guide is a full
 translation, so it has to be kept in step by hand.
+
+## D-039 — 2026-11-08 — active — PolyForm Noncommercial license
+
+**Decision:** Kinfold is licensed under the PolyForm Noncommercial License
+1.0.0 (`LICENSE.md`, official text verbatim, with a `Required Notice`
+copyright line). The license also covers the versions published before it
+was added. Commercial use needs a separate commercial license from the
+licensor, requested through a GitHub issue labelled `license`.
+Contributions are accepted under the same license, together with a grant
+that lets the licensor also license them commercially (CONTRIBUTING.md).
+
+**Rationale:** The owner made the repository public and asked for a
+license under which private use is unrestricted and commercial use needs a
+valid license. PolyForm Noncommercial is a standard license drafted by
+lawyers for exactly this model; a custom text would carry more legal risk.
+Its noncommercial scope also includes charities, education, public
+research and government use. The inbound grant in CONTRIBUTING.md keeps
+dual licensing possible once outside contributions arrive.
+
+**Consequences:** Kinfold is source-available, not open source in the OSI
+sense. The license is not legal advice, and terms for commercial licenses
+have yet to be defined by the owner.

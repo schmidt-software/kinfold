@@ -22,6 +22,16 @@ mechanics; the reasoning behind each rule is in `docs/DECISION-LOG.md`.
 
 No direct commits to `main`.
 
+## License of contributions
+
+Kinfold is licensed under the PolyForm Noncommercial License 1.0.0, and the
+licensor also grants commercial licenses (see README.md, "License"). By
+submitting a contribution you agree that it is licensed under the same
+noncommercial license, and you grant the licensor a perpetual, worldwide,
+royalty-free right to also license your contribution under other terms,
+including commercial licenses. Only submit work that you have the right to
+license this way.
+
 ## Rules
 
 - Standard library only. No external Go modules (see D-007).
