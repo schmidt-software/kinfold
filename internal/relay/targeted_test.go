@@ -115,3 +115,28 @@ func TestConfigEndpointServesPerDeviceView(t *testing.T) {
 		t.Fatalf("alice's view leaks other devices or rules: %d peers, %d rules", len(got.Peers), len(got.Policy.Allowed))
 	}
 }
+
+func TestConnectDoesNotRevealDevicesOutsideView(t *testing.T) {
+	state := threePeerState(t)
+	s, err := New(state.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	cert, err := x509.ParseCertificate(state.Config.Peers[0].Cert) // alice; carol is outside her view
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := func(target string) (int, string) {
+		r := httptest.NewRequest(http.MethodConnect, "/relay?peer="+target, nil)
+		r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, r)
+		return rec.Code, rec.Body.String()
+	}
+	c1, b1 := status("carol")
+	c2, b2 := status("nobody")
+	if c1 != c2 || b1 != b2 {
+		t.Fatalf("existing hidden device (%d %q) distinguishable from unknown (%d %q)", c1, b1, c2, b2)
+	}
+}

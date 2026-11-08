@@ -452,7 +452,7 @@ func identity(r *http.Request, members map[string]string) (string, bool) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	config, members, views, available, generation := s.config, s.members, s.views, s.available, s.generation
+	members, views, available, generation := s.members, s.views, s.available, s.generation
 	s.mu.Unlock()
 	if !available {
 		s.reject(w, "configuration unavailable", http.StatusServiceUnavailable)
@@ -484,8 +484,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleRenew(w, r, id)
 	case r.Method == http.MethodConnect && r.URL.Path == "/relay":
 		target := r.URL.Query().Get("peer")
-		if _, ok := config.Peer(target); !ok || id == target {
-			s.reject(w, "invalid target", http.StatusBadRequest)
+		// Devices outside the caller's view get the same answer as
+		// unauthorized pairs, so their existence is not disclosed (D-023).
+		if _, ok := views[id].config.Peer(target); !ok || id == target {
+			s.reject(w, "peer pair not authorized", http.StatusForbidden)
 			return
 		}
 		s.connect(w, r, id, target, generation)
