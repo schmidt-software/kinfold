@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -136,5 +137,33 @@ func TestConfigClientReusesConnection(t *testing.T) {
 	}
 	if n := dials.Load(); n != 1 {
 		t.Fatalf("three fetches used %d connections, want 1", n)
+	}
+}
+
+func TestConfigClientRejectsRollbackAfterRestart(t *testing.T) {
+	_, alice, _ := setup(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := NewConfigClient(alice)
+	defer c.Close()
+	if _, _, err := c.Fetch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c.LeaseUntil().Before(time.Now()) || c.NotBefore().IsZero() {
+		t.Fatal("lease or watermark not recorded")
+	}
+	// A restarted client that has seen a newer configuration than the
+	// controller now serves (e.g. a replayed or rolled-back controller)
+	// refuses it.
+	restarted := NewConfigClient(alice)
+	defer restarted.Close()
+	restarted.SetNotBefore(time.Now().Add(time.Minute))
+	if _, _, err := restarted.Fetch(ctx); !errors.Is(err, core.ErrConfigRollback) {
+		t.Fatalf("older configuration after restart: %v", err)
+	}
+	noKey := alice
+	noKey.ConfigKey = nil
+	if _, _, err := NewConfigClient(noKey).Fetch(ctx); err == nil {
+		t.Fatal("configuration accepted without a pinned key")
 	}
 }

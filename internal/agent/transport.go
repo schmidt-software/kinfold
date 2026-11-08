@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/schmidt-software/kinfold/internal/core"
@@ -44,6 +46,10 @@ type ConfigClient struct {
 	transport *http.Transport
 	client    *http.Client
 	err       error
+
+	mu         sync.Mutex
+	notBefore  time.Time // newest issue time accepted (rollback protection)
+	leaseUntil time.Time // end of the lease of the last accepted configuration
 }
 
 func NewConfigClient(cred core.Credential) *ConfigClient {
@@ -108,14 +114,78 @@ func (c *ConfigClient) Renew(ctx context.Context, request []byte) ([]byte, error
 func FetchConfig(ctx context.Context, cred core.Credential) (core.Config, string, error) {
 	c := NewConfigClient(cred)
 	defer c.Close()
+	if len(cred.ConfigKey) == 0 {
+		key, err := c.FetchConfigKey(ctx)
+		if err != nil {
+			return core.Config{}, "", err
+		}
+		c.cred.ConfigKey = key
+	}
 	return c.Fetch(ctx)
 }
 
-// Fetch retrieves and validates the configuration and returns the local
-// peer ID that the credential's certificate belongs to.
+// SetNotBefore restores the rollback watermark persisted by an earlier run.
+func (c *ConfigClient) SetNotBefore(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if t.After(c.notBefore) {
+		c.notBefore = t
+	}
+}
+
+// NotBefore returns the newest issue time accepted so far.
+func (c *ConfigClient) NotBefore() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.notBefore
+}
+
+// LeaseUntil returns when the last accepted configuration stops being valid.
+func (c *ConfigClient) LeaseUntil() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.leaseUntil
+}
+
+// FetchConfigKey retrieves the controller's configuration signing key over
+// the authenticated connection, for credentials created before v0.4.
+func (c *ConfigClient) FetchConfigKey(ctx context.Context) ([]byte, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+c.cred.Server+"/config-key", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("controller: %q", resp.Status)
+	}
+	var body struct {
+		ConfigKey []byte `json:"config_key"`
+	}
+	if err := core.DecodeJSON(resp.Body, &body); err != nil {
+		return nil, err
+	}
+	if len(body.ConfigKey) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("controller returned an invalid configuration key")
+	}
+	return body.ConfigKey, nil
+}
+
+// Fetch retrieves the signed configuration, verifies it with the pinned key
+// (signature, own device, rollback watermark, lease) and returns it with the
+// local peer ID that the credential's certificate belongs to.
 func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 	if c.err != nil {
 		return core.Config{}, "", c.err
+	}
+	if len(c.cred.ConfigKey) != ed25519.PublicKeySize {
+		return core.Config{}, "", fmt.Errorf("credential has no configuration key")
 	}
 	cred, client := c.cred, c.client
 	tlsCfg := c.transport.TLSClientConfig
@@ -131,13 +201,15 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return core.Config{}, "", fmt.Errorf("controller: %q", resp.Status)
 	}
-	var cfg core.Config
-	if err := core.DecodeJSON(resp.Body, &cfg); err != nil {
-		return cfg, "", err
+	var env core.SignedConfig
+	if err := core.DecodeJSON(resp.Body, &env); err != nil {
+		return core.Config{}, "", err
 	}
-	if err := cfg.Validate(); err != nil {
-		return cfg, "", err
+	payload, err := core.VerifyConfig(env, ed25519.PublicKey(cred.ConfigKey), "", c.NotBefore(), time.Now())
+	if err != nil {
+		return core.Config{}, "", err
 	}
+	cfg := payload.Config
 	own, err := x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
 	if err != nil {
 		return cfg, "", err
@@ -145,6 +217,12 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 	for _, p := range cfg.Peers {
 		pc, err := core.ParseCert(p.Cert)
 		if err == nil && core.Fingerprint(pc) == core.Fingerprint(own) {
+			if p.ID != payload.Peer {
+				return cfg, "", fmt.Errorf("signed configuration is for %q, but this certificate belongs to %q", payload.Peer, p.ID)
+			}
+			c.mu.Lock()
+			c.notBefore, c.leaseUntil = payload.IssuedAt, payload.NotAfter
+			c.mu.Unlock()
 			return cfg, p.ID, nil
 		}
 	}

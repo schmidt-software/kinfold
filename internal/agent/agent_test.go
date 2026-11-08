@@ -72,7 +72,7 @@ func TestControllerRejectsUnlistedCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.New(s.Config)
+	handler, err := relay.NewForState(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func setupWithReverse(t *testing.T, reverse bool) (core.Config, core.Credential,
 			t.Fatal(err)
 		}
 	}
-	handler, err := relay.New(s.Config)
+	handler, err := relay.NewForState(s)
 	if err != nil {
 		t.Fatal(err)
 	}

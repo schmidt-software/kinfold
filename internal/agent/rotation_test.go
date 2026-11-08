@@ -27,7 +27,7 @@ func TestRotationInvalidatesSessionAndOldCredential(t *testing.T) {
 	if err := s.Config.SetRule("alice", "bob", true); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.New(s.Config)
+	handler, err := relay.NewForState(s)
 	if err != nil {
 		t.Fatal(err)
 	}

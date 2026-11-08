@@ -79,7 +79,7 @@ func TestPeerSessionExpiresWithLocalCertificate(t *testing.T) {
 	}
 	state.Config.Peers[0].Cert = shortCert
 	alice.Cert = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: shortCert})
-	handler, err := relay.New(state.Config)
+	handler, err := relay.NewForState(state)
 	if err != nil {
 		t.Fatal(err)
 	}
