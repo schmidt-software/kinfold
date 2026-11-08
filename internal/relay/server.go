@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/schmidt-software/kinfold/internal/core"
@@ -62,6 +63,7 @@ type Server struct {
 	replicas       map[string]string       // replica certificate fingerprint -> replica ID
 	controllers    []string                // controller addresses signed into configurations
 	standby        bool                    // read-only standby: no renewal or enrollment
+	stale          atomic.Bool             // standby state too old to serve (D-031)
 	lease          time.Duration
 	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
 	renewInterval  time.Duration
@@ -134,6 +136,11 @@ func NewForState(state *core.State) (*Server, error) {
 // configuration and relays sessions, but refuses renewal and enrollment and
 // does not replicate further.
 func (s *Server) SetStandby() { s.standby = true }
+
+// SetStale makes a standby refuse configuration and relay requests with a
+// marked 503 while its replicated state is too old or no longer authorized
+// (D-031); devices keep their grace period and try other controllers.
+func (s *Server) SetStale(stale bool) { s.stale.Store(stale) }
 
 // setState records the state behind the configuration: replicas, the
 // controller list for devices and the copy served to replicas.
@@ -569,6 +576,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !available {
 		s.reject(w, "configuration unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if s.stale.Load() {
+		s.marked(w, "X-Kinfold-Standby", "standby state is stale")
 		return
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/enroll" && (r.TLS == nil || len(r.TLS.PeerCertificates) == 0) {
