@@ -114,6 +114,7 @@ func (s *State) RotatePeerEnrollment(id string, request []byte) ([]byte, error) 
 	}
 	s.Config = updated
 	s.UsedPeerKeys = history
+	delete(s.RenewedFrom, id) // an offline rotation supersedes any pending online renewal
 	return certPEM(cert), nil
 }
 

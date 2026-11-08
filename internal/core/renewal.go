@@ -1,8 +1,13 @@
 package core
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
+	"encoding/pem"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -32,25 +37,110 @@ func RenewalAccepted(cert *x509.Certificate, now time.Time) bool {
 	return now.Before(cert.NotAfter) && cert.NotAfter.Sub(now) <= lifetime/controllerRenewFraction
 }
 
-// RenewPeer replaces the certificate of peer id with one for the key in
-// request, authenticated by the certificate the device currently presents.
-// It applies the same checks as rotate-peer (proof of possession, Ed25519,
-// ID binding, key history) and additionally requires that the presented
-// certificate is the one on record and inside the renewal window.
-func (s *State) RenewPeer(id string, presented *x509.Certificate, request []byte, now time.Time) ([]byte, error) {
+// RenewPeer issues a new certificate for peer id for the key in request,
+// authenticated by the certificate the device presents. id is empty when the
+// presented certificate is no longer a member; it is then resolved through
+// RenewedFrom. The returned bool reports whether the state changed and must
+// be written.
+//
+// Normal renewal requires the presented certificate to be the one on record
+// and inside the renewal window, and applies the rotate-peer checks (proof of
+// possession, Ed25519, ID binding, key history).
+//
+// Retried renewal: if the presented certificate is the one the last renewal
+// replaced and the request is signed by the key of the current certificate,
+// the current certificate is returned again without changing the state. This
+// lets a device recover when the response to its renewal was lost; a holder
+// of only the old credential cannot use it, because it lacks the new key.
+func (s *State) RenewPeer(id string, presented *x509.Certificate, request []byte, now time.Time) ([]byte, bool, error) {
+	fp := Fingerprint(presented)
+	if id == "" {
+		for peer, previous := range s.RenewedFrom {
+			if previous == fp {
+				id = peer
+			}
+		}
+		if id == "" {
+			return nil, false, errors.New("peer is not authorized")
+		}
+	}
 	peer, ok := s.Config.Peer(id)
 	if !ok {
-		return nil, errors.New("peer is not authorized")
+		return nil, false, errors.New("peer is not authorized")
 	}
 	current, err := ParseCert(peer.Cert)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if Fingerprint(current) != Fingerprint(presented) {
-		return nil, errors.New("presented certificate is no longer the one on record")
+	if s.RenewedFrom[id] == fp {
+		pub, err := enrollmentPublicKey(id, request)
+		if err != nil {
+			return nil, false, err
+		}
+		if key, ok := current.PublicKey.(ed25519.PublicKey); !ok || !key.Equal(pub) {
+			return nil, false, errors.New("retried renewal must use the key of the issued certificate")
+		}
+		return certPEM(current.Raw), false, nil
+	}
+	if Fingerprint(current) != fp {
+		return nil, false, errors.New("presented certificate is no longer the one on record")
 	}
 	if !RenewalAccepted(current, now) {
-		return nil, ErrRenewalNotDue
+		return nil, false, ErrRenewalNotDue
 	}
-	return s.RotatePeerEnrollment(id, request)
+	if expiry, err := s.peerCertificateExpiry(now); err != nil {
+		return nil, false, err
+	} else if !expiry.After(current.NotAfter.Add(minRenewalGain)) {
+		// Near CA expiry every renewal would be capped at the CA's end and
+		// renewals would come ever faster (change review finding 8).
+		return nil, false, fmt.Errorf("%w: a new certificate would not outlive the current one because the CA expires on %s; rotate the CA", ErrRenewalNotDue, expiry.UTC().Format(time.DateOnly))
+	}
+	cert, err := s.RotatePeerEnrollment(id, request)
+	if err != nil {
+		return nil, false, err
+	}
+	if s.RenewedFrom == nil {
+		s.RenewedFrom = make(map[string]string)
+	}
+	s.RenewedFrom[id] = fp
+	return cert, true, nil
+}
+
+// minRenewalGain is how much longer a renewed certificate must live than the
+// current one for a renewal to be worth its session reset.
+const minRenewalGain = 7 * 24 * time.Hour
+
+// peerCertificateExpiry is the NotAfter a peer certificate issued now gets.
+func (s *State) peerCertificateExpiry(now time.Time) (time.Time, error) {
+	block, _ := pem.Decode(s.CA)
+	if block == nil {
+		return time.Time{}, errors.New("invalid CA certificate")
+	}
+	ca, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}, err
+	}
+	expires := now.AddDate(1, 0, 0)
+	if ca.NotAfter.Before(expires) {
+		expires = ca.NotAfter
+	}
+	return expires, nil
+}
+
+func (s *State) validateRenewedFrom() error {
+	for id, fp := range s.RenewedFrom {
+		if _, ok := s.Config.Peer(id); !ok {
+			return fmt.Errorf("renewal record for unknown peer %q", id)
+		}
+		data, err := hex.DecodeString(fp)
+		if err != nil || len(data) != sha256.Size {
+			return fmt.Errorf("invalid renewal record for peer %q", id)
+		}
+	}
+	return nil
+}
+
+// ForgetPeer removes per-peer records that must not outlive the peer.
+func (s *State) ForgetPeer(id string) {
+	delete(s.RenewedFrom, id)
 }
