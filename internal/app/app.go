@@ -730,7 +730,7 @@ func Run(args []string) error {
 	case "status", "run":
 		f := flags(args[0])
 		path := f.String("credential", "", "private peer credential file")
-		iface := f.String("interface", "kf0", "new Linux TUN interface name")
+		iface := f.String("interface", "kf0", "new TUN interface name (Linux only; macOS picks utunN)")
 		metricsAddr := f.String("metrics", "", "serve Prometheus metrics on this loopback host:port (run only; disabled when empty)")
 		autoRenew := f.Bool("auto-renew", true, "renew the device certificate automatically before it expires (run only)")
 		directListen := f.String("direct-listen", "", "accept direct peer sessions on this host:port, e.g. :51900 (run only; empty disables)")
