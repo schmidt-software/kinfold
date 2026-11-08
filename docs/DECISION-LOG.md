@@ -282,3 +282,34 @@ controller down, so expiry stays a warning (TLS rejects the device anyway).
 
 **Consequences:** A hand-edited or very old state that violates a rule no
 longer loads; the error names the peer and the rule.
+
+## D-015 — 2026-11-08 — active — Online device certificate renewal
+
+**Decision:** Devices renew their own certificates online via `POST /renew`
+on the existing mutual-TLS controller connection. The device generates a new
+Ed25519 key locally and sends only a CSR. The client requests renewal once
+less than 1/3 of the lifetime remains (checked hourly); the controller
+accepts once at most 1/2 remains, only from the device whose current
+certificate is on record, under the state lock, with all `rotate-peer`
+checks. The client writes the new credential atomically and restarts its
+tunnel. `kinfold renew` does the same once.
+
+**Rationale:** Review finding C-14 and alpha scope (D-003): with one-year
+certificates and manual CSR exchange per device, every missed device means
+an outage. Renewal over the authenticated channel needs no new trust
+relationship: the controller already holds the CA key and already trusts the
+current certificate. The 1/3–1/2 gap tolerates clock skew and retries while
+preventing a device from churning certificates and key-history entries.
+
+**Alternatives considered:** Offline renewal only (status quo; operationally
+fragile). Keeping the old key and only extending the certificate (simpler,
+but gives up regular key rotation, which the key history already supports).
+Moving the CA key out of the serving process (better isolation, but then
+online renewal is impossible; deferred together with signed configuration,
+#22).
+
+**Consequences:** `serve` writes the state file; administrators editing at
+the same moment get a lock error and retry, devices retry after 503. A
+renewal briefly reconnects all relay sessions because any change invalidates
+them (until #20). Stolen credentials can be renewed by the thief, which
+locks out the legitimate device and makes the theft visible.

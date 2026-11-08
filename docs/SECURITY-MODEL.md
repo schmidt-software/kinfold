@@ -153,6 +153,8 @@ With `renew-server` the administrator can also replace an already expired server
 
 For offline revocation, `remove-peer` may load an otherwise verified state with an expired server certificate; the service itself must not use it. The CA must still be valid. The file write confirms neither adoption by controller and clients nor compliance with a revocation deadline.
 
+Running clients renew their certificate online before it expires (DECISION-LOG D-015): a new key is generated on the device and only a certificate request is sent over the existing mutual-TLS connection; the controller accepts it only from the device whose current certificate is on record and only in the second half of its lifetime. A thief holding a device credential can renew it, as they could already impersonate the device; the legitimate device is then locked out.
+
 `rotate-peer` replaces the device certificate based on an independently verified offline request with a new local key. Addresses and policy are preserved; after asynchronous adoption the old identity is no longer accepted. Since there is no transaction between certificate issuance and state, no secure rollback and no guaranteed deadline, this is not a production rotation.
 
 A bounded history of public device key fingerprints prevents their re-authorization via current CLI commands, even after removal and with different requests. Migration only captures keys still present; older backups or manual edits can reset the history. This is neither tamper-proof rollback protection nor time-limited single-use enrollment.
