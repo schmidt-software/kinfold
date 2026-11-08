@@ -34,6 +34,10 @@ func NewEnrollment(id string) (key, request []byte, err error) {
 }
 
 func onePEM(data []byte, kind string) ([]byte, error) {
+	// Tolerate CRLF line endings and trailing blank lines from editors or
+	// Windows transfers (review C-08); anything else stays strict.
+	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+	data = append(bytes.TrimRight(data, " \t\n"), '\n')
 	if !bytes.HasPrefix(data, []byte("-----BEGIN "+kind+"-----\n")) {
 		return nil, fmt.Errorf("expected %s PEM block", kind)
 	}
