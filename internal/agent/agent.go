@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/schmidt-software/kinfold/internal/core"
+	"github.com/schmidt-software/kinfold/internal/metrics"
 )
 
 type link struct {
@@ -39,6 +40,29 @@ const (
 	tunnelMTU      = 1280
 	peerQueueDepth = 128
 )
+
+// Metrics is the client's metrics registry; one agent runs per process.
+var Metrics = metrics.New()
+
+var (
+	droppedMTU     = droppedCounter("mtu")
+	droppedSource  = droppedCounter("invalid_source")
+	droppedNoRoute = droppedCounter("no_route_or_policy")
+	droppedQueue   = droppedCounter("queue_full")
+	droppedInbound = droppedCounter("inbound_policy")
+)
+
+func droppedCounter(reason string) *metrics.Counter {
+	return Metrics.Counter("kinfold_packets_dropped_total", "Packets dropped by the client, by reason.", metrics.Labels{"reason": reason})
+}
+
+func peerConnected(peer string) *metrics.Gauge {
+	return Metrics.Gauge("kinfold_peer_connected", "1 while a session to the peer is established.", metrics.Labels{"peer": peer})
+}
+
+func peerBytes(peer, direction string) *metrics.Counter {
+	return Metrics.Counter("kinfold_peer_bytes_total", "Packet bytes exchanged with a peer.", metrics.Labels{"peer": peer, "direction": direction})
+}
 
 // peerWriteTimeout bounds a single frame write to a peer. Without it a dead
 // path with data in flight blocks the sender until TCP gives up
@@ -212,25 +236,30 @@ func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, 
 		}
 		packet := buf[:n]
 		if len(packet) > tunnelMTU {
+			droppedMTU.Inc()
 			slog.Debug("packet exceeds tunnel MTU; dropped", "size", len(packet), "mtu", tunnelMTU)
 			continue
 		}
 		src, dst, err := packetAddresses(packet)
 		if err != nil || (src != localIP && (!localIPv6.IsValid() || src != localIPv6)) {
+			droppedSource.Inc()
 			continue
 		}
 		l := (*routes.Load())[dst]
 		if l == nil || !l.allowOutgoing || (l.servicesOn && !servicePacket(packet, l.outServices)) {
+			droppedNoRoute.Inc()
 			continue
 		}
 		outbox := l.outbox.Load()
 		if outbox == nil {
+			droppedNoRoute.Inc()
 			continue
 		}
 		clone := append([]byte(nil), packet...)
 		select {
 		case *outbox <- clone:
 		default:
+			droppedQueue.Inc()
 			slog.Debug("peer queue full; packet dropped", "peer", l.peer.ID)
 		}
 	}
@@ -262,12 +291,14 @@ func (l *link) run(ctx context.Context, cred core.Credential, cfg *atomic.Pointe
 			queue := make(chan []byte, peerQueueDepth)
 			l.queue = queue
 			l.outbox.Store(&queue)
+			peerConnected(l.peer.ID).Set(1)
 			started := time.Now()
 			err = l.session(ctx, conn, localIP, device, writeMu)
 			if time.Since(started) >= stableLink {
 				backoff.reset()
 			}
 			l.outbox.Store(nil)
+			peerConnected(l.peer.ID).Set(0)
 			conn.Close()
 			var writeErr *tunnelWriteError
 			if errors.As(err, &writeErr) {
@@ -295,6 +326,7 @@ func (l *link) session(ctx context.Context, conn net.Conn, localIP netip.Addr, d
 	defer cancel()
 	done := make(chan error, 2)
 	peerIP, _ := netip.ParseAddr(l.peer.IP)
+	rx, tx := peerBytes(l.peer.ID, "rx"), peerBytes(l.peer.ID, "tx")
 	go func() {
 		for {
 			packet, err := readPacketLimited(conn, tunnelMTU)
@@ -310,8 +342,10 @@ func (l *link) session(ctx context.Context, conn net.Conn, localIP netip.Addr, d
 				return
 			}
 			if !l.allowIncoming || (l.servicesOn && !servicePacket(packet, l.inServices)) {
+				droppedInbound.Inc()
 				continue
 			}
+			rx.Add(uint64(len(packet)))
 			writeMu.Lock()
 			if ctx.Err() != nil {
 				writeMu.Unlock()
@@ -341,6 +375,7 @@ func (l *link) session(ctx context.Context, conn net.Conn, localIP netip.Addr, d
 					done <- err
 					return
 				}
+				tx.Add(uint64(len(packet)))
 				if err := WritePacket(conn, packet); err != nil {
 					done <- err
 					return
