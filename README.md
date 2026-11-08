@@ -87,6 +87,8 @@ The controller runs on Linux or macOS; the VPN client currently requires **Linux
 
 `./kinfold-linux status -credential alice.json` queries the configuration. `kinfold help` and `kinfold <command> -h` show the available options; `kinfold version` prints the build (version, commit, Go version, platform).
 
+`serve -metrics 127.0.0.1:9100` and `run -metrics 127.0.0.1:9101` expose Prometheus metrics in text format; the address must be a loopback address, because the metrics name devices and traffic volumes. Use a local collector or an SSH tunnel to scrape them.
+
 `serve` and `run` log to stderr via `log/slog`. `-log-format text|json` selects the format, `-log-level debug|info|warn|error` the minimum level (default `info`). Per-packet drop messages (MTU exceeded, peer queue full) are logged at `debug` level so they cannot flood production logs.
 
 Administrators can use `./kinfold check-config -data controller-data -credential admin-peer.json` to check whether the authenticated controller has loaded the same configuration as a local snapshot of the state file. The credential must belong to a device that is still authorized. The command prints both configuration hashes and returns an error on mismatch or reachability failure. It does not prove that clients have already adopted the configuration.

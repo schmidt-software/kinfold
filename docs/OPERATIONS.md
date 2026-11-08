@@ -134,6 +134,26 @@ because all traffic passes through its relay.
 
 ## Monitoring
 
+### Metrics
+
+Start the controller with `-metrics 127.0.0.1:9100` and clients with
+`-metrics 127.0.0.1:9101` (loopback only). Useful series:
+
+| Metric | Component | Meaning |
+| --- | --- | --- |
+| `kinfold_config_available` | controller | 0 while the state is invalid and the relay is closed. Alert on 0. |
+| `kinfold_config_reloads_total{result}` | controller | `applied`, `unchanged`, `failed` reloads of `state.json`. |
+| `kinfold_relay_endpoints`, `kinfold_relay_waiting` | controller | Current relay load. |
+| `kinfold_relay_sessions_closed_total{reason}` | controller | `config_change`, `unavailable`, `superseded`. |
+| `kinfold_relay_rejections_total{status}`, `kinfold_listener_rejected_total` | controller | Rejected requests and connections over per-source limits. |
+| `kinfold_renewals_total` | controller | Device certificates issued by online renewal. |
+| `kinfold_controller_reachable` | client | 0 while config fetches fail; the tunnel closes after 30 s. |
+| `kinfold_peer_connected{peer}`, `kinfold_peer_bytes_total{peer,direction}` | client | Session state and traffic per peer. |
+| `kinfold_packets_dropped_total{reason}` | client | `mtu`, `invalid_source`, `no_route_or_policy`, `queue_full`, `inbound_policy`. |
+| `kinfold_certificate_expiry_timestamp_seconds` | client | Alert when less than 30 days remain and renewal does not happen. |
+
+### Log messages
+
 Useful log messages (`-log-format json` makes them machine-readable):
 
 | Component | Message | Meaning |
