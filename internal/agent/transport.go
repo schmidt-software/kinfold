@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -67,6 +68,40 @@ func (c *ConfigClient) Close() {
 	if c.transport != nil {
 		c.transport.CloseIdleConnections()
 	}
+}
+
+const maxRenewalResponseBytes = 64 << 10
+
+// Renew sends a certificate request for the credential's own device and
+// returns the new certificate (PEM). The controller answers 409 while the
+// current certificate is outside its renewal window.
+func (c *ConfigClient) Renew(ctx context.Context, request []byte) ([]byte, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+c.cred.Server+"/renew", bytes.NewReader(request))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/pkcs10")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRenewalResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case resp.StatusCode == http.StatusConflict:
+		return nil, core.ErrRenewalNotDue
+	case resp.StatusCode != http.StatusOK:
+		return nil, fmt.Errorf("controller: %q: %q", resp.Status, bytes.TrimSpace(body))
+	case len(body) > maxRenewalResponseBytes:
+		return nil, fmt.Errorf("renewal response exceeds %d bytes", maxRenewalResponseBytes)
+	}
+	return body, nil
 }
 
 // FetchConfig performs a single fetch on a fresh connection.
