@@ -355,3 +355,27 @@ about the device trust changes. Automating CA rotation, by contrast, needs a
 verifiable trust transition (two CAs trusted in parallel, signed hand-over),
 which belongs with signed configuration (#22) and is out of alpha scope
 (D-003).
+
+## D-018 — 2026-11-08 — active — Renewal must survive a lost response
+
+**Decision:** The controller records, per device, the fingerprint of the
+certificate replaced by its last online renewal (`renewed_from` in the
+state). A request authenticated with that previous certificate and signed
+by the key of the *current* certificate returns the current certificate
+again without changing the state; the relay passes `/renew` requests from
+non-member certificates to the renewer for this purpose. The client stores
+key and request in `<credential>.renewing` before sending and resends the
+same request on the next attempt and when `run` starts. Failed renewal
+attempts block the presented certificate for 30 s; a member outside its
+window is refused before the state lock; renewals that would not outlive
+the current certificate by a week (CA about to expire) are refused.
+
+**Rationale:** The independent review of the alpha changes found that a
+lost renewal response locked the device out permanently (finding 1, verified
+by test): the controller had already replaced the certificate, and the
+client discarded the new key. Requiring the new key's signature keeps the
+retry useless to a thief of the old credential. Rate-limiting only failures
+keeps lock contention bounded without delaying a legitimate retry.
+
+**Consequences:** One more strict-decoded state field (`renewed_from`);
+`remove-peer` and offline rotation clear it.
