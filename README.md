@@ -353,3 +353,12 @@ go test ./internal/core -run '^$' -fuzz '^FuzzDecodeConfig$' -fuzztime 30s
 ```
 
 No external Go modules are required. The Docker integration test needs the rights listed above and uses temporary keys generated only for the test.
+
+## License
+
+Kinfold is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+
+- **Noncommercial use is free:** personal use, hobby projects, private study and research, and use by charities, educational institutions, public research organisations and government bodies, as defined in the license.
+- **Commercial use needs a commercial license.** This covers use by or for a business, in a commercial product or service, or for paid work for others. To get one, contact the licensor through [github.com/schmidt-software](https://github.com/schmidt-software). Opening an issue with the label `license` is enough to start.
+
+The license also covers the versions published here before it was added (v0.1-copilot to v0.5.0-alpha).
