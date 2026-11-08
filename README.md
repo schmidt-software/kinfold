@@ -254,6 +254,16 @@ On the controller, `./kinfold renew-server -data controller-data` renews the ser
 
 Even with an expired server certificate, `remove-peer` can remove devices from the state offline as long as the CA is valid and the rest of the state is consistent. This is only a local change, not a confirmed or time-bound revocation; the controller stays closed because of the expired certificate until the certificate is renewed and the controller restarted.
 
+## Releases
+
+Tagged versions (`v*`) are built by `.github/workflows/release.yml`: tests, then `scripts/release.sh`, which builds `linux/amd64`, `linux/arm64`, `darwin/amd64` and `darwin/arm64` binaries with `-trimpath`, without cgo and with an empty build ID, plus the systemd units and a `SHA256SUMS` file. The same commit and the Go toolchain pinned in `go.mod` produce bit-identical binaries, so a release can be verified by rebuilding it:
+
+```sh
+git checkout v0.2.0-alpha
+scripts/release.sh v0.2.0-alpha /tmp/verify
+diff /tmp/verify/SHA256SUMS SHA256SUMS   # from the release page
+```
+
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow.
