@@ -209,6 +209,8 @@ Start the controller with `-metrics 127.0.0.1:9100` and clients with
 | `kinfold_relay_sessions_closed_total{reason}` | controller | `config_change`, `unavailable`, `superseded`, `stale` (standby). |
 | `kinfold_relay_throttle_delay_milliseconds_total{peer}` | controller | Time relayed reads of a device were paused by `-relay-rate`. |
 | `kinfold_relay_rejections_total{status}`, `kinfold_listener_rejected_total` | controller | Rejected requests and connections over per-source limits. |
+| `kinfold_device_last_seen_timestamp_seconds{peer}` | controller | Last configuration fetch of each device from this controller (0: not since start). A device that is online fetches every 2 s; alert when it is older than a minute for devices that should be up. |
+| `kinfold_device_relay_endpoints{peer}` | controller | Relay endpoints of each device, waiting or bridged. |
 | `kinfold_renewals_total` | controller | Device certificates issued by online renewal. |
 | `kinfold_standby_last_replication_timestamp_seconds` | standby | Last successful replication. Alert when older than a few minutes. |
 | `kinfold_controller_reachable` | client | 0 while config fetches fail; the tunnel closes after 30 s. |
