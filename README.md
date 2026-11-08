@@ -34,6 +34,12 @@ A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux and macO
 
 Each device's configuration is signed with a dedicated controller key (separate from the TLS CA key) and carries a two-minute lease. Devices verify the signature against the key pinned in their credential, refuse configurations older than one they already accepted (also across restarts), and close their tunnel when the lease runs out without a fresh one. This bounds how long a device acts on an outdated configuration, but the controller remains the trust anchor: whoever controls it (its CA and signing keys) can admit devices and manipulate connections. With `add-peer` the controller also generates the device key; with token or offline enrollment the key is created on the device. A relay whose controller and keys are not compromised does not see the content of the inner TLS sessions, but it does see metadata such as which devices talk and how much.
 
+## The name
+
+*Kinfold* joins two English words: **kin**, the people you belong to, and **fold**, an enclosed pen that keeps a flock together. It describes what the network is meant to be: a small, closed circle of devices that were admitted explicitly, where nothing passes without a rule. That matches the design: up to 32 devices, default deny, and a controller that decides who belongs.
+
+The name was chosen in November 2026, when the project was taken over from its first prototype. It had to be short, easy to pronounce and must not suggest any relationship with existing VPN or overlay products. Out of five proposals, Kinfold fit the security model best. It gives the binary `kinfold` and the short form `kf` (interface names such as `kf0`). Trademarks and domains have not been checked.
+
 ## Note on the rename
 
 Up to version `v0.1-copilot` the project was called `my-zerotier`. The rename to Kinfold changed the binary (`kinfold`), the default name of the TUN interface (`kf0` instead of `mzt0`), the variable `KINFOLD_TEST_IMAGE` and the internal HTTP header for the configuration revision. Because of the header, older clients are not compatible with a new controller and vice versa: update the controller and **all clients** together. Existing controller state and credentials remain valid; newly created CAs are named `Kinfold CA`.
