@@ -66,6 +66,7 @@ type Server struct {
 	stale          atomic.Bool             // standby state too old to serve (D-031)
 	relayLimit     RelayLimit              // per-device bandwidth limit (D-035)
 	buckets        map[string]*bucket      // peer ID -> relay bandwidth bucket
+	bridges        map[net.Conn]func()     // bridged connection -> ends its bridge's pauses
 	lastSeen       map[string]time.Time    // peer ID -> last configuration fetch (D-036)
 	statusPeers    map[string]bool         // peers with status metric series
 	lease          time.Duration
@@ -93,7 +94,7 @@ func New(config core.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{metrics: metrics.New(), pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, views: views, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), buckets: make(map[string]*bucket), lastSeen: make(map[string]time.Time), statusPeers: map[string]bool{}, available: true}
+	s := &Server{metrics: metrics.New(), pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, views: views, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), buckets: make(map[string]*bucket), bridges: make(map[net.Conn]func()), lastSeen: make(map[string]time.Time), statusPeers: map[string]bool{}, available: true}
 	s.registerMetrics()
 	s.syncStatusMetrics(s.statusChanges())
 	return s, nil
@@ -850,6 +851,9 @@ func (s *Server) supersede(from, to string) []net.Conn {
 		if current.from == from && current.to == to {
 			delete(s.active, conn)
 			stale = append(stale, conn)
+			if stop := s.bridges[conn]; stop != nil {
+				stop()
+			}
 		}
 	}
 	return stale
@@ -877,6 +881,7 @@ func (s *Server) forget(conns ...net.Conn) {
 	defer s.mu.Unlock()
 	for _, conn := range conns {
 		delete(s.active, conn)
+		delete(s.bridges, conn)
 	}
 }
 
@@ -884,14 +889,18 @@ func (s *Server) forget(conns ...net.Conn) {
 // charging each device for what it sends (D-035).
 func (s *Server) bridgePair(conn, peerConn net.Conn, from string) {
 	done := make(chan struct{})
+	stop := sync.OnceFunc(func() { close(done) })
 	s.mu.Lock()
 	a := s.limitedEnd(conn, from, done)
 	b := s.limitedEnd(peerConn, s.active[peerConn].from, done)
+	// A superseded side must also end a pause of the bridge (v0.6 review
+	// finding 4); forget removes the entries.
+	s.bridges[conn], s.bridges[peerConn] = stop, stop
 	s.mu.Unlock()
-	bridge(a, b, done)
+	bridge(a, b, stop)
 }
 
-func bridge(a, b bridgeEnd, done chan struct{}) {
+func bridge(a, b bridgeEnd, stop func()) {
 	finished := make(chan struct{}, 2)
 	copyOne := func(dst net.Conn, src io.Reader) {
 		_, _ = io.CopyBuffer(dst, src, make([]byte, relayCopyBuffer))
@@ -900,7 +909,7 @@ func bridge(a, b bridgeEnd, done chan struct{}) {
 	go copyOne(a.conn, b.reader)
 	go copyOne(b.conn, a.reader)
 	<-finished
-	close(done)
+	stop()
 	a.conn.Close()
 	b.conn.Close()
 	<-finished

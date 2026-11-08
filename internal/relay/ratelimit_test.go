@@ -3,6 +3,7 @@ package relay
 import (
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ func TestRelayLimitThrottlesDevice(t *testing.T) {
 		s.mu.Lock()
 		a, b := s.limitedEnd(aliceRelay, id, done), s.limitedEnd(bobRelay, "bob", done)
 		s.mu.Unlock()
-		go bridge(a, b, done)
+		go bridge(a, b, sync.OnceFunc(func() { close(done) }))
 		payload := make([]byte, 80<<10)
 		start := time.Now()
 		go func() { _, _ = aliceSide.Write(payload); aliceSide.Close() }()
@@ -67,4 +68,45 @@ func TestRelayLimitThrottlesDevice(t *testing.T) {
 		t.Fatal("reader wrapped without a limit")
 	}
 	unlimited.mu.Unlock()
+}
+
+// A connection superseded while its bridge pauses must end the bridge at
+// once instead of after the pause (v0.6 review finding 4).
+func TestSupersedeEndsThrottledBridge(t *testing.T) {
+	s, err := NewForState(threePeerState(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetRelayLimit(RelayLimit{Rate: 1, Burst: 16 << 10})
+	aliceSide, aliceRelay := net.Pipe()
+	bobRelay, bobSide := net.Pipe()
+	defer aliceSide.Close()
+	defer bobSide.Close()
+	s.mu.Lock()
+	s.active[aliceRelay] = endpoint{from: "alice", to: "bob"}
+	s.active[bobRelay] = endpoint{from: "bob", to: "alice"}
+	s.mu.Unlock()
+	ended := make(chan struct{})
+	go func() { s.bridgePair(aliceRelay, bobRelay, "alice"); close(ended) }()
+	go func() { _, _ = io.Copy(io.Discard, bobSide) }()
+	// 32 KiB at 1 B/s with a 16 KiB burst pauses for hours.
+	go func() { _, _ = aliceSide.Write(make([]byte, 32<<10)) }()
+	time.Sleep(200 * time.Millisecond)
+	s.mu.Lock()
+	stale := s.supersede("alice", "bob")
+	s.mu.Unlock()
+	forceClose(stale...)
+	select {
+	case <-ended:
+	case <-time.After(3 * time.Second):
+		t.Fatal("bridge kept pausing after its connection was superseded")
+	}
+	s.forget(aliceRelay, bobRelay) // as the relay handler does after bridgePair
+	s.mu.Lock()
+	left := len(s.active) + len(s.bridges)
+	s.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d endpoint or bridge entries left", left)
+	}
 }

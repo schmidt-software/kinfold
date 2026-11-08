@@ -17,6 +17,8 @@ import (
 
 const relayCopyBuffer = 16 << 10
 
+const throttleMetric = "kinfold_relay_throttle_delay_milliseconds_total"
+
 // RelayLimit configures the per-device bandwidth limit; a zero Rate
 // disables it.
 type RelayLimit struct {
@@ -47,15 +49,17 @@ func (b *bucket) charge(limit RelayLimit, n int, now time.Time) time.Duration {
 	return time.Duration(-b.tokens / limit.Rate * float64(time.Second))
 }
 
-// SetRelayLimit sets the per-device relay bandwidth limit. It applies to
-// sessions bridged afterwards.
-func (s *Server) SetRelayLimit(limit RelayLimit) {
+// SetRelayLimit sets the per-device relay bandwidth limit and returns the
+// effective one (the burst is at least one read). It applies to sessions
+// bridged afterwards.
+func (s *Server) SetRelayLimit(limit RelayLimit) RelayLimit {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if limit.Rate > 0 && limit.Burst < relayCopyBuffer {
 		limit.Burst = relayCopyBuffer
 	}
 	s.relayLimit = limit
+	return limit
 }
 
 // bucketFor returns the device's bucket, or nil without a limit. Caller
@@ -114,6 +118,6 @@ func (s *Server) limitedEnd(conn net.Conn, id string, done <-chan struct{}) brid
 	if b == nil {
 		return bridgeEnd{conn: conn, reader: conn}
 	}
-	delayed := s.metrics.Counter("kinfold_relay_throttle_delay_milliseconds_total", "Time relayed reads were paused by the per-device bandwidth limit.", metrics.Labels{"peer": id})
+	delayed := s.metrics.Counter(throttleMetric, "Time relayed reads were paused by the per-device bandwidth limit.", metrics.Labels{"peer": id})
 	return bridgeEnd{conn: conn, reader: &limitedReader{src: conn, limit: s.relayLimit, bucket: b, done: done, delayed: delayed}}
 }

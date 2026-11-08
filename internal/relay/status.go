@@ -32,6 +32,7 @@ func (s *Server) statusChanges() (added, removed []string) {
 		if !current[id] {
 			removed = append(removed, id)
 			delete(s.lastSeen, id)
+			delete(s.buckets, id)
 		}
 	}
 	s.statusPeers = current
@@ -43,6 +44,7 @@ func (s *Server) syncStatusMetrics(added, removed []string) {
 		labels := metrics.Labels{"peer": id}
 		s.metrics.Remove(lastSeenMetric, labels)
 		s.metrics.Remove(deviceEndpointMetric, labels)
+		s.metrics.Remove(throttleMetric, labels)
 	}
 	for _, id := range added {
 		labels := metrics.Labels{"peer": id}
@@ -68,5 +70,11 @@ func (s *Server) syncStatusMetrics(added, removed []string) {
 	}
 }
 
-// seen records a configuration fetch. Caller holds s.mu.
-func (s *Server) seen(id string, now time.Time) { s.lastSeen[id] = now }
+// seen records a configuration fetch of a current member. A request that
+// raced with the device's removal must not re-create its status (v0.6
+// review finding 3). Caller holds s.mu.
+func (s *Server) seen(id string, now time.Time) {
+	if s.statusPeers[id] {
+		s.lastSeen[id] = now
+	}
+}
