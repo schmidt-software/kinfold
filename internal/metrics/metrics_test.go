@@ -13,6 +13,7 @@ func TestRegistryRendersPrometheusText(t *testing.T) {
 	r.Counter("kinfold_test_total", "Test counter.", Labels{"result": "ok"}).Add(3)
 	r.Counter("kinfold_test_total", "Test counter.", Labels{"result": "ok"}).Inc()
 	r.Counter("kinfold_test_total", "Test counter.", Labels{"result": "bad\"x"}).Inc()
+	r.Gauge("kinfold_label_escape", "Escaping.", Labels{"v": "a\\b\nc\td ä"}).Set(1)
 	r.Gauge("kinfold_gauge", "Test gauge.", nil).Set(-2)
 	r.GaugeFunc("kinfold_func", "Computed.", Labels{"b": "2", "a": "1"}, func() float64 { return 1.5 })
 	var out bytes.Buffer
@@ -25,6 +26,9 @@ kinfold_func{a="1",b="2"} 1.5
 # HELP kinfold_gauge Test gauge.
 # TYPE kinfold_gauge gauge
 kinfold_gauge -2
+# HELP kinfold_label_escape Escaping.
+# TYPE kinfold_label_escape gauge
+kinfold_label_escape{v="a\\b\nc	d ä"} 1
 # HELP kinfold_test_total Test counter.
 # TYPE kinfold_test_total counter
 kinfold_test_total{result="bad\"x"} 1

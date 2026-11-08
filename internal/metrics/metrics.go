@@ -59,6 +59,10 @@ func (r *Registry) family(name, help, kind string) *family {
 	return f
 }
 
+// labelEscaper applies the Prometheus text-format escaping for label values:
+// only backslash, double quote and line feed are escaped.
+var labelEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
 // Labels are rendered in key order.
 type Labels map[string]string
 
@@ -73,7 +77,7 @@ func (l Labels) String() string {
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
-		parts = append(parts, k+"="+strconv.Quote(l[k]))
+		parts = append(parts, k+`="`+labelEscaper.Replace(l[k])+`"`)
 	}
 	return "{" + strings.Join(parts, ",") + "}"
 }
