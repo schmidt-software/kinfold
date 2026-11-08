@@ -64,6 +64,8 @@ type Server struct {
 	controllers    []string                // controller addresses signed into configurations
 	standby        bool                    // read-only standby: no renewal or enrollment
 	stale          atomic.Bool             // standby state too old to serve (D-031)
+	relayLimit     RelayLimit              // per-device bandwidth limit (D-035)
+	buckets        map[string]*bucket      // peer ID -> relay bandwidth bucket
 	lease          time.Duration
 	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
 	renewInterval  time.Duration
@@ -89,7 +91,7 @@ func New(config core.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{metrics: metrics.New(), pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, views: views, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}
+	s := &Server{metrics: metrics.New(), pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, views: views, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), buckets: make(map[string]*bucket), available: true}
 	s.registerMetrics()
 	return s, nil
 }
@@ -804,7 +806,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	defer timer.Stop()
 	select {
 	case peerConn := <-p.match:
-		bridge(conn, peerConn)
+		s.bridgePair(conn, peerConn, from)
 		s.forget(conn, peerConn)
 	case <-p.cancel:
 		conn.Close()
@@ -820,7 +822,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		s.mu.Unlock()
 		select {
 		case peerConn := <-p.match:
-			bridge(conn, peerConn)
+			s.bridgePair(conn, peerConn, from)
 			s.forget(conn, peerConn)
 		case <-p.cancel:
 			conn.Close()
@@ -872,16 +874,28 @@ func (s *Server) forget(conns ...net.Conn) {
 	}
 }
 
-func bridge(a, b net.Conn) {
-	done := make(chan struct{}, 2)
-	copyOne := func(dst, src net.Conn) {
-		_, _ = io.Copy(dst, src)
-		done <- struct{}{}
+// bridgePair relays between a device's connection and its partner's,
+// charging each device for what it sends (D-035).
+func (s *Server) bridgePair(conn, peerConn net.Conn, from string) {
+	done := make(chan struct{})
+	s.mu.Lock()
+	a := s.limitedEnd(conn, from, done)
+	b := s.limitedEnd(peerConn, s.active[peerConn].from, done)
+	s.mu.Unlock()
+	bridge(a, b, done)
+}
+
+func bridge(a, b bridgeEnd, done chan struct{}) {
+	finished := make(chan struct{}, 2)
+	copyOne := func(dst net.Conn, src io.Reader) {
+		_, _ = io.CopyBuffer(dst, src, make([]byte, relayCopyBuffer))
+		finished <- struct{}{}
 	}
-	go copyOne(a, b)
-	go copyOne(b, a)
-	<-done
-	a.Close()
-	b.Close()
-	<-done
+	go copyOne(a.conn, b.reader)
+	go copyOne(b.conn, a.reader)
+	<-finished
+	close(done)
+	a.conn.Close()
+	b.conn.Close()
+	<-finished
 }
