@@ -286,6 +286,7 @@ func (s *Server) invalidate() []net.Conn {
 	stale := make([]net.Conn, 0, len(s.active))
 	for conn := range s.active {
 		stale = append(stale, conn)
+		s.stopBridge(conn)
 	}
 	s.active = make(map[net.Conn]endpoint)
 	return stale
@@ -406,6 +407,7 @@ func (s *Server) invalidatePairs(old, next core.Config) []net.Conn {
 		if pairChanged(e.from, e.to) {
 			delete(s.active, conn)
 			stale = append(stale, conn)
+			s.stopBridge(conn)
 		}
 	}
 	return stale
@@ -851,9 +853,7 @@ func (s *Server) supersede(from, to string) []net.Conn {
 		if current.from == from && current.to == to {
 			delete(s.active, conn)
 			stale = append(stale, conn)
-			if stop := s.bridges[conn]; stop != nil {
-				stop()
-			}
+			s.stopBridge(conn)
 		}
 	}
 	return stale
@@ -874,6 +874,15 @@ func (s *Server) admissionStatus(from string) int {
 		return http.StatusTooManyRequests
 	}
 	return 0
+}
+
+// stopBridge ends the pauses of the bridge carrying conn, so a closed
+// connection never waits for its bandwidth debt. Caller holds s.mu; the stop
+// function only closes a channel once.
+func (s *Server) stopBridge(conn net.Conn) {
+	if stop := s.bridges[conn]; stop != nil {
+		stop()
+	}
 }
 
 func (s *Server) forget(conns ...net.Conn) {
