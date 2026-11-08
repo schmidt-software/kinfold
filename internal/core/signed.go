@@ -22,6 +22,12 @@ import (
 // DefaultLease is how long a signed configuration may be used.
 const DefaultLease = 2 * time.Minute
 
+// MaxLease bounds the lease a device accepts.
+const MaxLease = 15 * time.Minute
+
+// LeaseDuration is how long the configuration may be used after receipt.
+func (p SignedPayload) LeaseDuration() time.Duration { return p.NotAfter.Sub(p.IssuedAt) }
+
 // MaxClockSkew bounds how far in the future issued_at may lie.
 const MaxClockSkew = 5 * time.Minute
 
@@ -97,9 +103,16 @@ func SignConfig(key ed25519.PrivateKey, peer string, view Config, endpoints map[
 }
 
 // VerifyConfig checks the envelope for device peer: signature, device,
-// freshness against notBefore (the newest issue time accepted so far), clock
-// skew and lease. It returns the payload. An empty peer skips the device
-// check; the caller must then match the payload's device itself.
+// freshness against notBefore (the newest issue time accepted so far; a
+// configuration must be strictly newer), clock skew and staleness. It
+// returns the payload. An empty peer skips the device check; the caller
+// must then match the payload's device itself.
+//
+// The device's own clock only decides staleness with MaxClockSkew of
+// tolerance in both directions; how long a verified configuration may be
+// used is measured by the device from the moment it received it (see
+// LeaseDuration), so a fast or slow device clock neither locks it out nor
+// extends the lease (v0.4 review finding 3).
 func VerifyConfig(env SignedConfig, pub ed25519.PublicKey, peer string, notBefore, now time.Time) (SignedPayload, error) {
 	var p SignedPayload
 	if len(pub) != ed25519.PublicKeySize || !ed25519.Verify(pub, append([]byte(signedConfigContext), env.Payload...), env.Signature) {
@@ -111,13 +124,13 @@ func VerifyConfig(env SignedConfig, pub ed25519.PublicKey, peer string, notBefor
 	if peer != "" && p.Peer != peer {
 		return p, fmt.Errorf("signed configuration is for device %q, not %q", p.Peer, peer)
 	}
-	if p.IssuedAt.Before(notBefore) {
-		return p, ErrConfigRollback
+	if !notBefore.IsZero() && !p.IssuedAt.After(notBefore) {
+		return p, ErrConfigRollback // strictly newer only: no replay of the newest (finding 4)
 	}
 	if p.IssuedAt.After(now.Add(MaxClockSkew)) {
 		return p, fmt.Errorf("signed configuration issued %s in the future; check the clocks", p.IssuedAt.Sub(now).Round(time.Second))
 	}
-	if !now.Before(p.NotAfter) || !p.NotAfter.After(p.IssuedAt) {
+	if !p.NotAfter.After(p.IssuedAt) || p.NotAfter.Sub(p.IssuedAt) > MaxLease || !now.Before(p.NotAfter.Add(MaxClockSkew)) {
 		return p, ErrConfigExpired
 	}
 	if err := p.Config.Validate(); err != nil {

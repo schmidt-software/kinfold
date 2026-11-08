@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 type Peer struct {
@@ -98,6 +99,7 @@ func (c Config) Validate() error {
 		}
 	}
 	ids, ips, certs, keys := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	folded := map[string]bool{}
 	ips6 := map[netip.Addr]bool{}
 	for _, p := range c.Peers {
 		ip, err := netip.ParseAddr(p.IP)
@@ -131,10 +133,14 @@ func (c Config) Validate() error {
 		if err != nil {
 			return fmt.Errorf("peer %s: %w", p.ID, err)
 		}
-		if ids[p.ID] || ips[p.IP] || certs[fp] || keys[key] {
-			return fmt.Errorf("duplicate peer ID, IP, certificate or public key: %s", p.ID)
+		// IDs must also be unique ignoring case: they are object keys in
+		// signed payloads, which the strict decoder compares case-folded
+		// (v0.4 review finding 2).
+		if ids[p.ID] || folded[strings.ToLower(p.ID)] || ips[p.IP] || certs[fp] || keys[key] {
+			return fmt.Errorf("duplicate peer ID (ignoring case), IP, certificate or public key: %s", p.ID)
 		}
 		ids[p.ID], ips[p.IP], certs[fp] = true, true, true
+		folded[strings.ToLower(p.ID)] = true
 		keys[key] = true
 	}
 	if c.Policy != nil {

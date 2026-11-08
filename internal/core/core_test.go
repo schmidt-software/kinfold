@@ -137,3 +137,16 @@ func TestConfigCloneIsDeepAndRevisionEqual(t *testing.T) {
 		t.Fatal("clone invented a policy")
 	}
 }
+
+func TestPeerIDsUniqueIgnoringCase(t *testing.T) {
+	s, err := NewState("localhost:8443", "10.77.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddPeer("alice", "10.77.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddPeer("Alice", "10.77.0.2"); err == nil {
+		t.Fatal("peer ID differing only in case accepted")
+	}
+}

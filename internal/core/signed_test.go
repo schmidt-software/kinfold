@@ -50,8 +50,15 @@ func TestSignedConfigRoundTripAndRejections(t *testing.T) {
 	if _, err := VerifyConfig(env, pub, "alice", now.Add(time.Second), now); !errors.Is(err, ErrConfigRollback) {
 		t.Fatalf("older than accepted: %v", err)
 	}
-	if _, err := VerifyConfig(env, pub, "alice", time.Time{}, now.Add(DefaultLease)); !errors.Is(err, ErrConfigExpired) {
-		t.Fatalf("expired lease: %v", err)
+	if _, err := VerifyConfig(env, pub, "alice", time.Time{}, now.Add(DefaultLease+MaxClockSkew)); !errors.Is(err, ErrConfigExpired) {
+		t.Fatalf("stale envelope: %v", err)
+	}
+	// A device clock up to MaxClockSkew fast still accepts a fresh envelope.
+	if _, err := VerifyConfig(env, pub, "alice", time.Time{}, now.Add(DefaultLease+time.Minute)); err != nil {
+		t.Fatalf("fresh envelope rejected on a fast device clock: %v", err)
+	}
+	if _, err := VerifyConfig(env, pub, "alice", p.IssuedAt, now); !errors.Is(err, ErrConfigRollback) {
+		t.Fatalf("exact replay of the newest envelope: %v", err)
 	}
 	future, _ := SignConfig(priv, "alice", view, nil, now.Add(time.Hour), DefaultLease)
 	if _, err := VerifyConfig(future, pub, "alice", time.Time{}, now); err == nil {
