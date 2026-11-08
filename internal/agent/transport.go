@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -15,6 +16,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +53,25 @@ type ConfigClient struct {
 	mu         sync.Mutex
 	notBefore  time.Time // newest issue time accepted (rollback protection)
 	leaseUntil time.Time // end of the lease of the last accepted configuration
+	directPort int       // advertised direct-session port, 0 when disabled
+	directIPs  []string  // advertised local addresses
+	endpoints  map[string][]string
+}
+
+// SetDirect makes every fetch advertise that this device accepts direct
+// sessions on port, optionally at the given local addresses (D-026).
+func (c *ConfigClient) SetDirect(port int, addrs []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.directPort, c.directIPs = port, append([]string(nil), addrs...)
+}
+
+// Endpoints returns the signed direct endpoints of peer from the last
+// accepted configuration.
+func (c *ConfigClient) Endpoints(peer string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.endpoints[peer]...)
 }
 
 func NewConfigClient(cred core.Credential) *ConfigClient {
@@ -177,6 +199,12 @@ func (c *ConfigClient) FetchConfigKey(ctx context.Context) ([]byte, error) {
 	return body.ConfigKey, nil
 }
 
+// ErrRefused marks an authenticated controller's explicit refusal to serve a
+// configuration (403: the device is not authorized, 503: the controller has
+// no valid configuration). Unlike an unreachable controller, it ends the
+// device's authorization at once (D-026).
+var ErrRefused = errors.New("controller refused the configuration request")
+
 // Fetch retrieves the signed configuration, verifies it with the pinned key
 // (signature, own device, rollback watermark, lease) and returns it with the
 // local peer ID that the credential's certificate belongs to.
@@ -193,11 +221,22 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 	if err != nil {
 		return core.Config{}, "", err
 	}
+	c.mu.Lock()
+	if c.directPort > 0 {
+		req.Header.Set("X-Kinfold-Direct-Port", strconv.Itoa(c.directPort))
+		if len(c.directIPs) > 0 {
+			req.Header.Set("X-Kinfold-Direct-Addrs", strings.Join(c.directIPs, ","))
+		}
+	}
+	c.mu.Unlock()
 	resp, err := client.Do(req)
 	if err != nil {
 		return core.Config{}, "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable {
+		return core.Config{}, "", fmt.Errorf("%w: %q", ErrRefused, resp.Status)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return core.Config{}, "", fmt.Errorf("controller: %q", resp.Status)
 	}
@@ -221,7 +260,7 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 				return cfg, "", fmt.Errorf("signed configuration is for %q, but this certificate belongs to %q", payload.Peer, p.ID)
 			}
 			c.mu.Lock()
-			c.notBefore, c.leaseUntil = payload.IssuedAt, payload.NotAfter
+			c.notBefore, c.leaseUntil, c.endpoints = payload.IssuedAt, payload.NotAfter, payload.Endpoints
 			c.mu.Unlock()
 			return cfg, p.ID, nil
 		}
