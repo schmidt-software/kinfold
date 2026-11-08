@@ -163,7 +163,7 @@ func TestSuperviseHandsPolicyChangesToRunningAgent(t *testing.T) {
 	fetch := func(context.Context, core.Credential) (core.Config, string, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		return current, "alice", nil
+		return current.Clone(), "alice", nil // a real fetch decodes a fresh copy
 	}
 	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser, updates <-chan core.Config) error {
 		for {
