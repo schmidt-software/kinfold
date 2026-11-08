@@ -59,7 +59,7 @@ for peer in alice bob charlie; do
   id=$(docker run -d --name "$name" --network "$network" --cap-add NET_ADMIN --device /dev/net/tun \
     --mount "type=bind,src=$work/kinfold,dst=/kinfold,readonly" \
     --mount "type=bind,src=$work/$peer.json,dst=/credential.json,readonly" \
-    --entrypoint /kinfold "$image" run -credential /credential.json)
+    --entrypoint /kinfold "$image" run -credential /credential.json -direct-listen :51900)
   case "$peer" in alice) alice_id=$id ;; bob) bob_id=$id ;; charlie) charlie_id=$id ;; esac
 done
 
@@ -84,14 +84,31 @@ if ! docker exec "$controller" wget -qO- http://127.0.0.1:9100/metrics 2>/dev/nu
   exit 1
 fi
 echo "Controller metrics on loopback: OK"
+# Alice learns Bob's signed direct endpoint with a configuration fetch and
+# upgrades from the relay within a few seconds.
+direct_ok=false
+for _ in $(seq 1 40); do
+  if docker logs "$alice" 2>&1 | grep -q 'msg="peer connected" peer=bob path=direct'; then
+    direct_ok=true
+    break
+  fi
+  sleep 0.5
+done
+if ! "$direct_ok"; then
+  echo "Alice did not reach Bob over the direct path" >&2
+  docker logs "$alice" >&2
+  exit 1
+fi
+docker exec "$alice" ping -c 2 -W 2 10.77.0.2 >/dev/null
+echo "Direct path between clients: OK"
 
 if docker exec "$alice" ping -c 2 -W 1 10.77.0.3 >/dev/null 2>&1 ||
    docker exec "$charlie" ping -c 2 -W 1 10.77.0.1 >/dev/null 2>&1; then
   echo "Default-deny policy failed" >&2
   exit 1
 fi
-if docker logs "$alice" 2>&1 | grep -q 'msg="peer connected through relay" peer=charlie' ||
-   docker logs "$charlie" 2>&1 | grep -q 'msg="peer connected through relay" peer=alice'; then
+if docker logs "$alice" 2>&1 | grep -q 'msg="peer connected" peer=charlie' ||
+   docker logs "$charlie" 2>&1 | grep -q 'msg="peer connected" peer=alice'; then
   echo "Unauthorized peers established a relay connection" >&2
   exit 1
 fi
@@ -185,6 +202,9 @@ if [ "$failed_closed" != true ]; then
   echo "Controller did not fail closed on invalid state" >&2
   exit 1
 fi
+# Relay sessions end at once; direct sessions end when the clients' next
+# configuration fetch is refused (one poll interval).
+sleep 4
 if docker exec "$alice" /kinfold status -credential /credential.json >/dev/null 2>&1 ||
    docker exec "$alice" ping -c 2 -W 2 10.77.0.2 >/dev/null 2>&1; then
   echo "Invalid state allowed traffic" >&2
@@ -252,6 +272,9 @@ if [ "$updated" != true ]; then
   echo "Controller did not load new policy" >&2
   exit 1
 fi
+# The running client applies the change with its next fetch (2 s poll);
+# a direct session is not cut by the relay.
+sleep 3
 if docker exec "$alice" ping -c 2 -W 2 10.77.0.2 >/dev/null 2>&1; then
   echo "Active stale-policy session was not terminated" >&2
   exit 1
@@ -307,7 +330,7 @@ bob_id=
 bob_id=$(docker run -d --name "$bob" --network "$network" --cap-add NET_ADMIN --device /dev/net/tun \
   --mount "type=bind,src=$work/kinfold,dst=/kinfold,readonly" \
   --mount "type=bind,src=$work/bob-new.json,dst=/credential.json,readonly" \
-  --entrypoint /kinfold "$image" run -credential /credential.json)
+  --entrypoint /kinfold "$image" run -credential /credential.json -direct-listen :51900)
 rotated=false
 for _ in $(seq 1 30); do
   if docker exec "$alice" ping -c 1 -W 1 10.77.0.2 >/dev/null 2>&1 &&
@@ -410,6 +433,9 @@ if docker exec "$bob" /kinfold status -credential /credential.json >/dev/null 2>
   echo "Revoked peer still authorized" >&2
   exit 1
 fi
+# Alice drops the link with her next fetch; Bob closes his tunnel when the
+# controller refuses his fetch (403). Both within one poll interval.
+sleep 3
 if docker exec "$alice" ping -c 2 -W 2 10.77.0.2 >/dev/null 2>&1; then
   echo "Revoked peer still reachable" >&2
   exit 1
