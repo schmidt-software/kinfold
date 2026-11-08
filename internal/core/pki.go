@@ -25,6 +25,10 @@ type State struct {
 	ServerKey    []byte   `json:"server_key"`
 	Config       Config   `json:"config"`
 	UsedPeerKeys []string `json:"used_peer_keys,omitempty"`
+	// RenewedFrom maps a peer ID to the fingerprint of the certificate its
+	// last online renewal replaced, so a device whose renewal response was
+	// lost can collect the new certificate again (D-018).
+	RenewedFrom map[string]string `json:"renewed_from,omitempty"`
 }
 
 func serial() (*big.Int, error) {
@@ -239,6 +243,9 @@ func loadState(dir string, renewServer bool) (*State, error) {
 		return nil, err
 	}
 	if err := s.validatePeerKeyHistory(); err != nil {
+		return nil, err
+	}
+	if err := s.validateRenewedFrom(); err != nil {
 		return nil, err
 	}
 	if err := s.validatePKI(renewServer); err != nil {
