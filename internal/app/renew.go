@@ -203,9 +203,35 @@ func renewLoop(ctx context.Context, path string, cred core.Credential, client *a
 // fetchAfterRenewal waits until the controller has reloaded the state with
 // the new certificate (the watcher polls about once per second).
 func fetchAfterRenewal(ctx context.Context, cred core.Credential) (core.Config, string, error) {
+	return fetchAfterRenewalAt(ctx, "", cred)
+}
+
+// fetchWithWatermark fetches the configuration once, honouring and updating
+// the rollback watermark persisted next to the credential at path.
+func fetchWithWatermark(ctx context.Context, path string, cred core.Credential) (core.Config, string, error) {
+	client := agent.NewConfigClient(cred)
+	defer client.Close()
+	if path != "" {
+		client.SetNotBefore(readSeen(path))
+	}
+	cfg, id, err := client.Fetch(ctx)
+	if err == nil && path != "" {
+		writeSeen(path, client.NotBefore())
+	}
+	return cfg, id, err
+}
+
+func fetchAfterRenewalAt(ctx context.Context, path string, cred core.Credential) (core.Config, string, error) {
 	var lastErr error
 	for i := 0; i < 30; i++ {
-		cfg, id, err := agent.FetchConfig(ctx, cred)
+		var cfg core.Config
+		var id string
+		var err error
+		if len(cred.ConfigKey) == 0 {
+			cfg, id, err = agent.FetchConfig(ctx, cred)
+		} else {
+			cfg, id, err = fetchWithWatermark(ctx, path, cred)
+		}
 		if err == nil {
 			return cfg, id, nil
 		}
@@ -403,14 +429,16 @@ func joinWithToken(ctx context.Context, server, fingerprint, id, tokenFile, out 
 			return core.Credential{}, fmt.Errorf("store pending enrollment: %w", err)
 		}
 	}
-	cert, ca, err := agent.Join(ctx, server, fingerprint, pending.Token, pending.Request)
+	cert, ca, configKey, err := agent.Join(ctx, server, fingerprint, pending.Token, pending.Request)
 	if err != nil {
 		if strings.Contains(err.Error(), "403") {
 			os.Remove(path) // the controller refused the token; nothing was issued for this key
 		}
 		return core.Credential{}, err
 	}
-	return core.CompleteEnrollment(server, ca, cert, pending.Key)
+	cred, err := core.CompleteEnrollment(server, ca, cert, pending.Key)
+	cred.ConfigKey = configKey
+	return cred, err
 }
 
 // pinConfigKey fetches the controller's configuration key over the
