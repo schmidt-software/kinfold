@@ -66,6 +66,8 @@ type Server struct {
 	stale          atomic.Bool             // standby state too old to serve (D-031)
 	relayLimit     RelayLimit              // per-device bandwidth limit (D-035)
 	buckets        map[string]*bucket      // peer ID -> relay bandwidth bucket
+	lastSeen       map[string]time.Time    // peer ID -> last configuration fetch (D-036)
+	statusPeers    map[string]bool         // peers with status metric series
 	lease          time.Duration
 	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
 	renewInterval  time.Duration
@@ -91,8 +93,9 @@ func New(config core.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{metrics: metrics.New(), pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, views: views, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), buckets: make(map[string]*bucket), available: true}
+	s := &Server{metrics: metrics.New(), pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, views: views, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), buckets: make(map[string]*bucket), lastSeen: make(map[string]time.Time), statusPeers: map[string]bool{}, available: true}
 	s.registerMetrics()
+	s.syncStatusMetrics(s.statusChanges())
 	return s, nil
 }
 
@@ -235,7 +238,8 @@ func (s *Server) Update(config core.Config, err error) error {
 		revision, members, views, err = derive(config)
 	}
 	var stale []net.Conn
-	defer func() { forceClose(stale...) }()
+	var added, removed []string
+	defer func() { forceClose(stale...); s.syncStatusMetrics(added, removed) }()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -266,6 +270,7 @@ func (s *Server) Update(config core.Config, err error) error {
 		s.config, s.revision, s.members, s.views = config, revision, members, views
 	}
 	s.available = true
+	added, removed = s.statusChanges()
 	return nil
 }
 
@@ -627,6 +632,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		s.mu.Lock()
 		s.register(id, r, now)
+		s.seen(id, now)
 		endpoints := s.endpointsFor(id, views[id].config, now)
 		// Devices accept only strictly newer configurations; keep issue
 		// times strictly increasing even if the wall clock steps back.
