@@ -68,8 +68,10 @@ func TestRelayPeerPairAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := request(state.Config, ""); got != http.StatusConflict {
-		t.Fatalf("missing revision accepted without policy: %d", got)
+	// Without a policy alice's view contains no other device: the target is
+	// refused before the revision is looked at.
+	if got := request(state.Config, ""); got != http.StatusForbidden {
+		t.Fatalf("pair accepted without policy: %d", got)
 	}
 	if got := request(state.Config, revision); got != http.StatusForbidden {
 		t.Fatalf("configuration without policy did not deny the pair: %d", got)
