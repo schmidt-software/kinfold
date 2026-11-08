@@ -177,7 +177,9 @@ func TestSuperviseHandsPolicyChangesToRunningAgent(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
-	go func() { result <- supervise(ctx, cred, "kf0", s.Config, "alice", 5*time.Millisecond, time.Hour, open, fetch, run) }()
+	go func() {
+		result <- supervise(ctx, cred, "kf0", s.Config, "alice", 5*time.Millisecond, time.Hour, open, fetch, run)
+	}()
 	defer func() { cancel(); <-result }()
 	eventually(t, "initial tunnel", func() bool { return opens.Load() == 1 })
 	mu.Lock()
