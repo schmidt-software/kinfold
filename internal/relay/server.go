@@ -43,6 +43,9 @@ var ErrBusy = errors.New("controller busy")
 
 const maxRenewalRequestBytes = 64 << 10
 
+// pairingTimeout bounds how long a relay endpoint waits for its partner.
+var pairingTimeout = 30 * time.Second
+
 type Server struct {
 	renew      Renewer
 	config     core.Config
@@ -382,7 +385,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	p := &pending{from: from, conn: conn, match: make(chan net.Conn, 1), cancel: make(chan struct{})}
 	s.waiting[key] = p
 	s.mu.Unlock()
-	timer := time.NewTimer(30 * time.Second)
+	timer := time.NewTimer(pairingTimeout)
 	defer timer.Stop()
 	select {
 	case peerConn := <-p.match:
