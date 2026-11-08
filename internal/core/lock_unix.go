@@ -18,7 +18,7 @@ func LockState(dir string) (*os.File, error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("controller state is locked by another writer: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrStateLocked, err)
 	}
 	return f, nil
 }

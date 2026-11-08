@@ -1,11 +1,15 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"runtime"
 )
+
+// ErrStateLocked is returned by LockState when another writer holds the lock.
+var ErrStateLocked = errors.New("controller state is locked by another writer")
 
 // InsecurePermissionsEnv disables the permission checks for setups where
 // file modes are not meaningful (some container volume drivers). Set it to 1.
