@@ -4,7 +4,7 @@
 
 A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux and macOS devices. A controller you run yourself admits devices explicitly, hands out fixed addresses and directional rules, and relays end-to-end encrypted sessions between them. Kinfold implements its own protocol and is not compatible with any other VPN or overlay product.
 
-> **Status: alpha (`v0.5.0-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor; a standby controller can take over when it fails, and traffic passes through the relay unless devices can reach each other directly. See [Known limits](#known-limits).
+> **Status: alpha (`v0.6.0-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor; a standby controller can take over when it fails, and traffic passes through the relay unless devices can reach each other directly. See [Known limits](#known-limits).
 
 ## Features
 
@@ -31,7 +31,7 @@ A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux and macO
 
 **Not included:** NAT traversal (hole punching), UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, Windows and mobile clients, automatic controller failover with quorum. `status` shows the authorized members; live state (last contact, relay sessions per device) is available as controller metrics.
 
-**User guide** for the latest release (v0.5.0-alpha): [English](docs/user-guide/en/v0.5.0-alpha.md) · [Deutsch](docs/user-guide/de/v0.5.0-alpha.md) — guides for all versions: [docs/user-guide](docs/user-guide/README.md)
+**User guide** for the latest release (v0.6.0-alpha): [English](docs/user-guide/en/v0.6.0-alpha.md) · [Deutsch](docs/user-guide/de/v0.6.0-alpha.md) — guides for all versions: [docs/user-guide](docs/user-guide/README.md)
 
 **Documentation:** [operator guide](docs/OPERATIONS.md) · [security model](docs/SECURITY-MODEL.md) · [architecture decisions](docs/DECISIONS.md) · [decision log](docs/DECISION-LOG.md) · [code review of the prototype](docs/review-v0.1-copilot.md) · [contributing](CONTRIBUTING.md)
 
@@ -331,8 +331,8 @@ Even with an expired server certificate, `remove-peer` can remove devices from t
 Tagged versions (`v*`) are built by `.github/workflows/release.yml`: tests, then `scripts/release.sh`, which builds `linux/amd64`, `linux/arm64`, `darwin/amd64` and `darwin/arm64` binaries with `-trimpath`, without cgo and with an empty build ID, plus the systemd units and a `SHA256SUMS` file. The same commit and the Go toolchain pinned in `go.mod` produce bit-identical binaries, so a release can be verified by rebuilding it:
 
 ```sh
-git checkout v0.5.0-alpha
-scripts/release.sh v0.5.0-alpha /tmp/verify
+git checkout v0.6.0-alpha
+scripts/release.sh v0.6.0-alpha /tmp/verify
 diff /tmp/verify/SHA256SUMS SHA256SUMS   # from the release page
 ```
 
