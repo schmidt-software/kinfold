@@ -182,7 +182,7 @@ sudo ./kinfold-linux run -credential carol.json
 
 ## Offline enrollment with a local key
 
-As an alternative to `add-peer`, a device can generate its own private key. The procedure is **experimental and offline**: the request proves possession of the key but does not authenticate the person or the device. Request and CA must be authenticated and compared independently; there are no one-time tokens, request expiry or online approval yet.
+As an alternative to `add-peer`, a device can generate its own private key. The procedure is **experimental and offline**: the request proves possession of the key but does not authenticate the person or the device. Request and CA must be authenticated and compared independently; the request has no expiry. For enrollment with a single-use token, see [Online enrollment with a token](#online-enrollment-with-a-token).
 
 When reading them, the CLI limits requests, private keys and certificate files to 64 KiB each; larger files are rejected.
 

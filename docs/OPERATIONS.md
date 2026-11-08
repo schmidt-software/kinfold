@@ -53,6 +53,12 @@ rollback protection (see `SECURITY-MODEL.md`). After restoring:
 - Key fingerprints recorded after the backup are lost, so a key removed in
   that period could be approved again. Check new requests carefully.
 
+Backups taken before v0.4 contain no configuration signing key
+(`config_key`). A controller started from such a backup creates a new key,
+and every device then rejects its configurations ("configuration signature
+is invalid"). Re-enroll the devices, or restore a backup taken with v0.4 or
+later.
+
 Restore with the controller stopped, keep mode `0700` on the directory and
 `0600` on `state.json`, then start the controller and check the startup log
 for certificate warnings.
@@ -179,9 +185,11 @@ after the suspected compromise.
 
 **Controller unreachable**
 
-Clients keep their tunnel for 30 seconds, then close it and reconnect as
-soon as the controller answers. No data flows while the controller is down,
-because all traffic passes through its relay.
+With a standby controller, clients switch to it within one poll interval
+(see "Standby controller"). Without one, clients keep their tunnel for 30
+seconds, then close it and reconnect as soon as the controller answers.
+During those 30 seconds, direct sessions keep carrying traffic, but relayed
+traffic stops, because the relay is part of the controller.
 
 ## Relay bandwidth
 
