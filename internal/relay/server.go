@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,6 +57,7 @@ type Server struct {
 	enroll         Enroller
 	signer         ed25519.PrivateKey      // signs /config responses (D-025)
 	endpoints      map[string]registration // direct-path endpoints by peer ID (D-026)
+	lastIssued     time.Time               // issue times only increase within a process
 	lease          time.Duration
 	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
 	renewInterval  time.Duration
@@ -465,6 +467,11 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("device enrolled with token", "peer", id, "source", host)
+	if s.signer != nil {
+		// The enrolling device pins the configuration key from this
+		// response, which arrives over the CA-pinned connection (finding 10).
+		w.Header().Set("X-Kinfold-Config-Key", base64.StdEncoding.EncodeToString(s.signer.Public().(ed25519.PublicKey)))
+	}
 	s.count("kinfold_enrollments_total", "Devices enrolled with a token.", nil)
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	w.Header().Set("Connection", "close")
@@ -481,8 +488,15 @@ func identity(r *http.Request, members map[string]string) (string, bool) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	members, views, available, generation := s.members, s.views, s.available, s.generation
+	members, views, available, generation, closed := s.members, s.views, s.available, s.generation, s.closed
 	s.mu.Unlock()
+	if closed {
+		// Shutting down is not a verdict on the configuration: devices keep
+		// their grace period (v0.4 review finding 9).
+		w.Header().Set("X-Kinfold-Shutdown", "1")
+		s.reject(w, "controller shutting down", http.StatusServiceUnavailable)
+		return
+	}
 	if !available {
 		s.reject(w, "configuration unavailable", http.StatusServiceUnavailable)
 		return
@@ -513,8 +527,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.register(id, r, now)
 		endpoints := s.endpointsFor(id, views[id].config, now)
+		// Devices accept only strictly newer configurations; keep issue
+		// times strictly increasing even if the wall clock steps back.
+		issued := now
+		if !issued.After(s.lastIssued) {
+			issued = s.lastIssued.Add(time.Microsecond)
+		}
+		s.lastIssued = issued
 		s.mu.Unlock()
-		env, err := core.SignConfig(s.signer, id, views[id].config, endpoints, now, s.lease)
+		env, err := core.SignConfig(s.signer, id, views[id].config, endpoints, issued, s.lease)
 		if err != nil {
 			slog.Error("signing configuration failed", "error", err)
 			s.reject(w, "configuration unavailable", http.StatusInternalServerError)
