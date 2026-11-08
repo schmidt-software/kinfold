@@ -2,14 +2,14 @@
 
 # Kinfold
 
-A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux devices. A controller you run yourself admits devices explicitly, hands out fixed addresses and directional rules, and relays end-to-end encrypted sessions between them. Kinfold implements its own protocol and is not compatible with any other VPN or overlay product.
+A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux and macOS devices. A controller you run yourself admits devices explicitly, hands out fixed addresses and directional rules, and relays end-to-end encrypted sessions between them. Kinfold implements its own protocol and is not compatible with any other VPN or overlay product.
 
 > **Status: alpha (`v0.4.0-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor; a standby controller can take over when it fails, and traffic passes through the relay unless devices can reach each other directly. See [Known limits](#known-limits).
 
 ## Features
 
 **Network**
-- One private IPv4 network (RFC 1918 or 100.64.0.0/10) and optionally one IPv6 ULA `/64`, up to 32 devices, one Linux TUN interface per device, MTU 1280.
+- One private IPv4 network (RFC 1918 or 100.64.0.0/10) and optionally one IPv6 ULA `/64`, up to 32 devices, one TUN interface per device (Linux TUN or macOS utun), MTU 1280.
 - Unicast only between assigned device addresses; source and destination are checked against spoofing on both ends.
 - Default deny: traffic needs a directional allow rule; an optional experimental filter restricts it further to protocols and destination ports.
 
@@ -26,7 +26,7 @@ A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux devices.
 - Clients ride out controller restarts (30 s grace period), reconnect with backoff and detect dead paths in seconds.
 - Structured logging (`log/slog`, text or JSON), `kinfold version`, hardened systemd units, reproducible release builds with checksums, and an [operator guide](docs/OPERATIONS.md).
 
-**Not included:** NAT traversal (hole punching), UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, non-Linux clients, automatic controller failover with quorum. `status` shows the authorized members, not live connection state.
+**Not included:** NAT traversal (hole punching), UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, Windows and mobile clients, automatic controller failover with quorum. `status` shows the authorized members, not live connection state.
 
 **Documentation:** [operator guide](docs/OPERATIONS.md) · [security model](docs/SECURITY-MODEL.md) · [architecture decisions](docs/DECISIONS.md) · [decision log](docs/DECISION-LOG.md) · [code review of the prototype](docs/review-v0.1-copilot.md) · [contributing](CONTRIBUTING.md)
 
@@ -50,7 +50,9 @@ The script builds a Linux binary, creates temporary credentials and an isolated 
 
 ## Manual setup
 
-The controller runs on Linux or macOS; the VPN client currently requires **Linux**, `/dev/net/tun`, the `ip` command from iproute2 or BusyBox in `/usr/sbin`, `/sbin`, `/usr/bin` or `/bin` (`PATH` is not used), and administrator rights or `CAP_NET_ADMIN`. The virtual network must not overlap with existing local networks or routes.
+The controller runs on Linux or macOS; the VPN client runs on **Linux** and **macOS**. On Linux it requires `/dev/net/tun`, the `ip` command from iproute2 or BusyBox in `/usr/sbin`, `/sbin`, `/usr/bin` or `/bin` (`PATH` is not used), and administrator rights or `CAP_NET_ADMIN`. The virtual network must not overlap with existing local networks or routes.
+
+On macOS the client needs root (`sudo`) and uses `/sbin/ifconfig` and `/sbin/route`. The kernel picks the interface name (`utunN`, logged as `utun interface created`); `-interface` is ignored, and the systemd units and `kf-` interface names apply to Linux only. There is no launchd unit yet. `sh scripts/macos-smoke.sh` checks a macOS client against a Linux client in Docker (asks for the `sudo` password).
 
 1. Build and initialize on the controller. Replace `vpn.example.com:8443` with the DNS name or IP address and TCP port of the controller reachable by all clients. The name is embedded in the server certificate and must match the name used.
 

@@ -633,3 +633,26 @@ devices accept only strictly newer configurations. Devices on different
 controllers can only use the direct path between them. The standby has no
 systemd unit of its own; the controller unit with an added `-standby` flag
 is used.
+
+## D-029 — 2026-11-08 — active — macOS client via utun
+
+**Decision:** The client supports macOS through a utun interface opened
+with the kernel control socket `com.apple.net.utun_control`, using only
+package `syscall` (no cgo, no external module). The 4-byte address family
+header is added and stripped in the TUN wrapper, so the agent keeps seeing
+raw IP packets. Addresses and routes are set with `/sbin/ifconfig` and
+`/sbin/route` from fixed paths with a timeout, like `ip` on Linux. The
+kernel chooses the interface name; `-interface` is ignored on macOS. CI
+cross-compiles darwin/amd64 and darwin/arm64; `scripts/macos-smoke.sh` is a
+manual end-to-end check (macOS client ↔ Linux client in Docker), because
+CI runners cannot create utun interfaces without root.
+
+**Rationale:** Issue #24. macOS is the most common second desktop platform
+of the target group and offers a TUN-like interface without kernel
+extensions or signed network extensions. Windows and mobile need driver or
+app-store packaging and stay deferred (#64).
+
+**Consequences:** The macOS client runs as root, has no launchd unit and no
+automated test of the tunnel in CI; the smoke test must be run by hand
+before releases that touch the TUN code. Behaviour above the TUN device is
+identical to Linux.
