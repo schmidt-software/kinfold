@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,7 +34,17 @@ const (
 	maxPeerEndpoints  = 32
 )
 
+// Renewer issues a new device certificate for an authenticated member. It is
+// called without the relay lock and performs its own state locking.
+type Renewer func(id string, presented *x509.Certificate, request []byte) ([]byte, error)
+
+// ErrBusy tells the relay to answer 503 so the device retries later.
+var ErrBusy = errors.New("controller busy")
+
+const maxRenewalRequestBytes = 64 << 10
+
 type Server struct {
+	renew      Renewer
 	config     core.Config
 	revision   string            // config.Revision(), computed once per update
 	members    map[string]string // certificate fingerprint -> peer ID
@@ -138,6 +149,41 @@ func forceClose(conns ...net.Conn) {
 	}
 }
 
+// SetRenewer enables POST /renew. It must be called before serving.
+func (s *Server) SetRenewer(r Renewer) { s.renew = r }
+
+func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request, id string) {
+	if s.renew == nil {
+		reject(w, "not found", http.StatusNotFound)
+		return
+	}
+	request, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRenewalRequestBytes))
+	if err != nil {
+		reject(w, "renewal request too large or unreadable", http.StatusBadRequest)
+		return
+	}
+	cert, err := s.renew(id, r.TLS.PeerCertificates[0], request)
+	switch {
+	case errors.Is(err, core.ErrRenewalNotDue):
+		reject(w, err.Error(), http.StatusConflict)
+		return
+	case errors.Is(err, ErrBusy):
+		w.Header().Set("Retry-After", "5")
+		reject(w, "controller busy; retry later", http.StatusServiceUnavailable)
+		return
+	case err != nil:
+		slog.Warn("certificate renewal rejected", "peer", id, "error", err)
+		reject(w, "renewal rejected: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	slog.Info("device certificate renewed", "peer", id)
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Connection", "close")
+	if _, err := w.Write(cert); err != nil {
+		slog.Warn("renewal response failed", "peer", id, "error", err)
+	}
+}
+
 func (s *Server) Close() {
 	s.mu.Lock()
 	s.available = false
@@ -221,6 +267,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewEncoder(w).Encode(config); err != nil {
 			slog.Warn("config response failed", "error", err)
 		}
+	case r.Method == http.MethodPost && r.URL.Path == "/renew":
+		s.handleRenew(w, r, id)
 	case r.Method == http.MethodConnect && r.URL.Path == "/relay":
 		target := r.URL.Query().Get("peer")
 		if _, ok := config.Peer(target); !ok || id == target {
