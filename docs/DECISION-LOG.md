@@ -584,3 +584,24 @@ poll interval for reachable peers and by grace period and lease (D-025)
 otherwise, both depending on correct clocks. Devices behind NAT on both
 sides still need the relay. The direct listener is an additional
 unauthenticated TLS endpoint on the device.
+
+## D-027 — 2026-11-08 — active — Clock handling for signed configuration
+
+**Decision:** A device measures the lease of a verified configuration from
+the moment it received it on its own monotonic clock; its wall clock only
+decides staleness (issue time at most 5 minutes in the future, lease end
+plus 5 minutes not yet passed). Configurations must be strictly newer than
+the newest accepted one. The controller issues strictly increasing issue
+times within a process. `kinfold seen-reset` removes a device's watermark
+for recovery after the controller's clock was set back.
+
+**Rationale:** The pre-release review of v0.4 (findings 3 and 4) showed
+that a device clock more than two minutes fast rejected every
+configuration, and that the newest envelope could be replayed. Receipt-based
+leases remove the dependency on device–controller clock agreement while
+keeping the bound on how long a configuration is used.
+
+**Consequences:** A replayed old envelope on a device with an empty
+watermark can be used for at most the lease duration plus the clock
+tolerance. Controller clock regressions across restarts still lock devices
+out until fixed or reset; this is documented in the operator guide.

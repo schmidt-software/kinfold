@@ -104,6 +104,18 @@ building a new network and moving devices over:
 Device IP addresses can stay the same as long as a device does not run both
 clients at once.
 
+## Clocks and signed configuration
+
+Devices accept only configurations newer than the newest one they have
+seen, and remember it across restarts in `<credential>.seen`. Within one
+controller process issue times always increase, but if the controller host's
+clock is set back by more than a few seconds between restarts (or the
+controller moves to a host with a slower clock), devices reject its
+configurations until the clock catches up and close their tunnels after 30
+seconds. Fix the clock; if that is not possible, run `kinfold seen-reset
+-credential <file>` on each device and restart the client. Device clocks may
+be up to five minutes off without effect.
+
 ## Incident response
 
 **Lost or stolen device**
