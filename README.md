@@ -31,6 +31,8 @@ A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux and macO
 
 **Not included:** NAT traversal (hole punching), UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, Windows and mobile clients, automatic controller failover with quorum. `status` shows the authorized members; live state (last contact, relay sessions per device) is available as controller metrics.
 
+**User guide** for the latest release (v0.5.0-alpha): [English](docs/user-guide/en/v0.5.0-alpha.md) · [Deutsch](docs/user-guide/de/v0.5.0-alpha.md) — guides for all versions: [docs/user-guide](docs/user-guide/README.md)
+
 **Documentation:** [operator guide](docs/OPERATIONS.md) · [security model](docs/SECURITY-MODEL.md) · [architecture decisions](docs/DECISIONS.md) · [decision log](docs/DECISION-LOG.md) · [code review of the prototype](docs/review-v0.1-copilot.md) · [contributing](CONTRIBUTING.md)
 
 ### Trust model in one paragraph
