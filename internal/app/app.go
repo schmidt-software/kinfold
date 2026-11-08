@@ -587,6 +587,7 @@ func Run(args []string) error {
 		if err := s.RememberActivePeerKeys(); err != nil {
 			return err
 		}
+		s.ForgetPeer(*id)
 		var peers []core.Peer
 		for _, p := range s.Config.Peers {
 			if p.ID != *id {
@@ -694,6 +695,12 @@ func Run(args []string) error {
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
+		if args[0] == "run" && *autoRenew {
+			var err error
+			if cred, err = resumeRenewal(ctx, *path, cred); err != nil {
+				return err
+			}
+		}
 		cfg, id, err := agent.FetchConfig(ctx, cred)
 		if err != nil {
 			return err

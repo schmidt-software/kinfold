@@ -141,3 +141,63 @@ func TestRenewCommandReportsNotDue(t *testing.T) {
 		t.Fatalf("renew on a fresh certificate: %v", err)
 	}
 }
+
+// The controller applies a renewal but the response never reaches the
+// device (connection drop, crash, timeout). The device must be able to
+// collect the issued certificate instead of being locked out.
+func TestRenewalRecoversFromLostResponse(t *testing.T) {
+	var late time.Time
+	_, credPath, cred := renewalController(t, func() time.Time { return late })
+	cert, err := credentialCertificate(cred)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late = cert.NotAfter.Add(-7 * 24 * time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// What renewCredential does before sending: store the pending request.
+	key, request, err := core.NewEnrollment("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := core.WriteJSON(pendingPath(credPath), pendingRenewal{Key: key, Request: request}); err != nil {
+		t.Fatal(err)
+	}
+	client := agent.NewConfigClient(cred)
+	if _, err := client.Renew(ctx, request); err != nil {
+		t.Fatalf("renewal request: %v", err)
+	}
+	client.Close() // the response is "lost": nothing is stored
+
+	// The old certificate is no longer a member once the controller reloads.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, _, err := agent.FetchConfig(ctx, cred)
+		if err != nil && strings.Contains(err.Error(), "403") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("old certificate still accepted: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	renewed, err := resumeRenewal(ctx, credPath, cred)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if string(renewed.Key) != string(key) {
+		t.Fatal("resumed credential does not use the pending key")
+	}
+	if _, err := os.Stat(pendingPath(credPath)); !os.IsNotExist(err) {
+		t.Fatalf("pending renewal not removed: %v", err)
+	}
+	if _, id, err := agent.FetchConfig(ctx, renewed); err != nil || id != "alice" {
+		t.Fatalf("recovered credential not accepted: id=%q err=%v", id, err)
+	}
+	var onDisk core.Credential
+	if err := core.ReadJSON(credPath, &onDisk); err != nil || string(onDisk.Cert) != string(renewed.Cert) {
+		t.Fatalf("credential file not updated: %v", err)
+	}
+}
