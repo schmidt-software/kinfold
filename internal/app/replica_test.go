@@ -72,6 +72,9 @@ func runTestController(t *testing.T, dir, addr string, replica *core.ReplicaCred
 			stopped = true
 			cancel()
 			<-done
+			if rep != nil {
+				rep.Close()
+			}
 		}
 	}
 	t.Cleanup(stop)
@@ -235,6 +238,13 @@ func TestStandbyStopsServingStaleState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rep.Close()
+	if _, err := prepareStandby(ctx, replica, standbyDir, time.Hour); err == nil {
+		t.Fatal("second standby started on a data directory in use")
+	}
+	if err := Run([]string{"replica-promote", "-data", standbyDir, "-standby", replicaPath}); err == nil {
+		t.Fatal("promoted a running standby")
+	}
 	var stale []bool
 	rep.setStale = func(v bool) { stale = append(stale, v) }
 
@@ -275,15 +285,18 @@ func TestStandbyStopsServingStaleState(t *testing.T) {
 	if len(stale) != 3 || !stale[2] {
 		t.Fatalf("removed standby keeps serving: %v", stale)
 	}
+	rep.Close()
 	if _, err := prepareStandby(ctx, replica, standbyDir, time.Hour); err == nil {
 		t.Fatal("removed standby started from its stored state")
 	}
 
 	// With the primary down, a recent stored state is used, an old one not.
 	stopPrimary()
-	if _, err := prepareStandby(ctx, replica, standbyDir, time.Hour); err != nil {
+	again, err := prepareStandby(ctx, replica, standbyDir, time.Hour)
+	if err != nil {
 		t.Fatalf("standby did not start from a recent state: %v", err)
 	}
+	again.Close()
 	old := time.Now().Add(-2 * time.Hour)
 	if err := os.Chtimes(filepath.Join(standbyDir, "state.json"), old, old); err != nil {
 		t.Fatal(err)

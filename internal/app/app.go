@@ -672,6 +672,7 @@ func Run(args []string) error {
 			if rep, err = prepareStandby(ctx, cred, *dir, *standbyMaxAge); err != nil {
 				return err
 			}
+			defer rep.Close()
 		}
 		loadServed := core.LoadState
 		if replica != nil {

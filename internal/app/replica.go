@@ -41,6 +41,17 @@ type replicator struct {
 	mu       sync.Mutex
 	lastOK   time.Time
 	stale    bool
+	// lock is the data directory lock a running standby holds for its whole
+	// lifetime, so replica-promote cannot run against a live standby.
+	lock *os.File
+}
+
+// Close releases the data directory lock.
+func (r *replicator) Close() {
+	if r.lock != nil {
+		r.lock.Close()
+		r.lock = nil
+	}
 }
 
 // primaryAnswer is a non-200 answer of the primary: it was reachable.
@@ -113,11 +124,13 @@ func (r *replicator) pull(ctx context.Context) (bool, error) {
 		r.succeeded(now)
 		return false, nil
 	}
-	lock, err := core.LockState(r.dir)
-	if err != nil {
-		return false, err
+	if r.lock == nil {
+		lock, err := core.LockState(r.dir)
+		if err != nil {
+			return false, err
+		}
+		defer lock.Close()
 	}
-	defer lock.Close()
 	if err := core.WriteJSON(path, &state); err != nil {
 		return false, err
 	}
@@ -227,6 +240,15 @@ func prepareStandby(ctx context.Context, cred core.ReplicaCredential, dir string
 		return nil, err
 	}
 	r.maxAge = maxAge
+	if r.lock, err = core.LockState(dir); err != nil {
+		return nil, fmt.Errorf("standby data directory is in use (another standby or an administrative command): %w", err)
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			r.Close()
+		}
+	}()
 	if _, err := r.pull(ctx); err != nil {
 		var down unreachable
 		if !errors.As(err, &down) {
@@ -242,6 +264,7 @@ func prepareStandby(ctx context.Context, cred core.ReplicaCredential, dir string
 		r.lastOK = info.ModTime()
 		slog.Warn("primary unreachable; starting with the last replicated state", "error", err, "replicated", info.ModTime().UTC().Format(time.RFC3339))
 	}
+	ok = true
 	return r, nil
 }
 
