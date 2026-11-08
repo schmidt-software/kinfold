@@ -783,3 +783,26 @@ existing file or a missing directory, before anything changes.
 **Consequences:** If the output write fails after the state was written, a
 key from an `approve` is recorded in the key history. Its certificate is
 not lost, because it is printed.
+
+## D-035 — 2026-11-08 — active — Per-device relay bandwidth limit
+
+**Decision:** `serve -relay-rate` and `-relay-burst` limit the bytes each
+device sends through the relay with one token bucket per device, shared by
+all of its sessions. The relay reads at most 16 KiB at a time. A read that
+overdraws the bucket is followed by a pause that pays off the debt, and the
+pause ends early when the bridge closes. Throttling slows the TCP stream
+(backpressure) and never drops data. The limit is off by default. The pause
+time is exported per device.
+
+**Rationale:** Issue #96 and the known limit "bandwidth quotas are
+missing": one device could saturate the controller's uplink for everybody.
+Limiting what a device sends charges the sender, and receivers cannot be
+used to throttle others. A per-device bucket fits the trust model, because
+identities are authenticated and connection counts per device are already
+bounded. Debt-based charging after the read needs no read-size prediction
+and keeps the long-term rate exact.
+
+**Consequences:** No global bandwidth cap: many devices can still fill the
+uplink together. The bucket state lives in memory, so a controller restart
+refills every bucket. Changing the limit requires a restart. Direct
+sessions are not limited.

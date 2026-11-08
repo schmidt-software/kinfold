@@ -183,6 +183,17 @@ Clients keep their tunnel for 30 seconds, then close it and reconnect as
 soon as the controller answers. No data flows while the controller is down,
 because all traffic passes through its relay.
 
+## Relay bandwidth
+
+By default a device may use as much relay bandwidth as the controller has.
+`serve -relay-rate 2M` limits every device to 2 MB/s of relayed traffic it
+sends, summed over all its sessions; `-relay-burst` sets the bucket size
+(default one second at the rate, at least 16 KiB). The limit applies to
+sessions bridged after the start and does not affect direct sessions. A
+throttled device's TCP sessions slow down; nothing is dropped. Watch
+`kinfold_relay_throttle_delay_milliseconds_total{peer}` to see which devices
+hit the limit.
+
 ## Monitoring
 
 ### Metrics
@@ -196,6 +207,7 @@ Start the controller with `-metrics 127.0.0.1:9100` and clients with
 | `kinfold_config_reloads_total{result}` | controller | `applied`, `unchanged`, `failed` reloads of `state.json`. |
 | `kinfold_relay_endpoints`, `kinfold_relay_waiting` | controller | Current relay load. |
 | `kinfold_relay_sessions_closed_total{reason}` | controller | `config_change`, `unavailable`, `superseded`, `stale` (standby). |
+| `kinfold_relay_throttle_delay_milliseconds_total{peer}` | controller | Time relayed reads of a device were paused by `-relay-rate`. |
 | `kinfold_relay_rejections_total{status}`, `kinfold_listener_rejected_total` | controller | Rejected requests and connections over per-source limits. |
 | `kinfold_renewals_total` | controller | Device certificates issued by online renewal. |
 | `kinfold_standby_last_replication_timestamp_seconds` | standby | Last successful replication. Alert when older than a few minutes. |
