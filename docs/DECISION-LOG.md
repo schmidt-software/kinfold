@@ -743,3 +743,43 @@ primary; that is out of scope for v0.5.
 one poll interval. A split between controllers can last up to the primary
 retry interval (one minute) after the primary returns, or as long as some
 devices cannot reach the primary.
+
+## D-033 — 2026-11-08 — active — Scope of v0.6.0-alpha
+
+**Decision:** v0.6.0-alpha is an operability release:
+- a per-device relay bandwidth limit (#96);
+- live device status metrics (#97);
+- a macOS launchd service and an IPv6 smoke test (#98);
+- the state-before-credential write order (#99);
+- refreshed known limits (#100).
+
+The `future` issues stay deferred: UDP/NAT (#62), quorum (#63) and Windows/mobile (#64).
+
+**Rationale:** The owner asked to continue to the next release, with the
+decisions left to me. The deferred issues need custom cryptography,
+external modules or consensus, which D-007 and D-021 rule out at this
+stage. The chosen items close gaps that the README itself lists as known
+limits, and each fits into one PR.
+
+**Consequences:** No protocol change for devices is planned. The relay
+limit and the metrics are controller-side, and the controller and clients
+remain compatible with v0.5.
+
+## D-034 — 2026-11-08 — active — State before credential files
+
+**Decision:** `add-peer`, `approve`, `rotate-peer` and `replica-add`
+first check that the output path does not exist and that its directory
+does. They then write the state, and only then the output file. If the
+output write fails anyway:
+- `approve` and `rotate-peer` print the certificate, which is public;
+- `add-peer` and `replica-add` tell the operator to remove and re-add.
+
+**Rationale:** In the old order, a failed state write left a CA-signed
+certificate outside the member list (a known limit). The new order can only
+fail the other way, with a member that has no credential. That is visible,
+harmless and can be removed. The pre-check catches the usual causes, an
+existing file or a missing directory, before anything changes.
+
+**Consequences:** If the output write fails after the state was written, a
+key from an `approve` is recorded in the key history. Its certificate is
+not lost, because it is printed.
