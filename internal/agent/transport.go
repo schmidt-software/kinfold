@@ -267,8 +267,8 @@ func (c *ConfigClient) FetchConfigKey(ctx context.Context) ([]byte, error) {
 }
 
 // ErrRefused marks an authenticated controller's explicit refusal to serve a
-// configuration (403: the device is not authorized, 503: the controller has
-// no valid configuration). Unlike an unreachable controller, it ends the
+// configuration (403: the device is not authorized; 503 without a marker:
+// the controller has no valid configuration and no other controller served). Unlike an unreachable controller, it ends the
 // device's authorization at once (D-026).
 var ErrRefused = errors.New("controller refused the configuration request")
 
@@ -287,6 +287,10 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 	var resp *http.Response
 	var server string
 	var lastErr error
+	// A 503 is only one controller's state (shutting down, standby, or no
+	// valid configuration): try the others first. A 403 is a verdict on the
+	// device and ends the search (v0.5 review finding 6).
+	refused, unavailable := "", ""
 	for _, server = range c.order(time.Now()) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+server+"/config", nil)
 		if err != nil {
@@ -301,8 +305,19 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 		}
 		c.mu.Unlock()
 		resp, err = client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusServiceUnavailable {
+			if resp.Header.Get("X-Kinfold-Shutdown") == "" && resp.Header.Get("X-Kinfold-Standby") == "" {
+				refused = resp.Status
+			} else {
+				unavailable = resp.Status
+			}
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+			resp.Body.Close()
+			resp = nil
+			continue
+		}
 		if err == nil {
-			break // any answer, including a refusal, comes from an authenticated controller
+			break // any other answer, including a refusal, comes from an authenticated controller
 		}
 		lastErr = err
 		if ctx.Err() != nil {
@@ -310,6 +325,12 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 		}
 	}
 	if resp == nil {
+		switch {
+		case refused != "":
+			return core.Config{}, "", fmt.Errorf("%w: %q", ErrRefused, refused)
+		case unavailable != "":
+			return core.Config{}, "", fmt.Errorf("controller: %q", unavailable)
+		}
 		return core.Config{}, "", lastErr
 	}
 	defer resp.Body.Close()
@@ -319,7 +340,7 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 	c.mu.Lock()
 	c.current = server
 	c.mu.Unlock()
-	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable) && resp.Header.Get("X-Kinfold-Shutdown") == "" && resp.Header.Get("X-Kinfold-Standby") == "" {
+	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-Kinfold-Shutdown") == "" && resp.Header.Get("X-Kinfold-Standby") == "" {
 		return core.Config{}, "", fmt.Errorf("%w: %q", ErrRefused, resp.Status)
 	}
 	if resp.StatusCode != http.StatusOK {
