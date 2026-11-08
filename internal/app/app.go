@@ -53,6 +53,8 @@ Commands:
   token-revoke Revoke a pending enrollment token
   join         Enroll this device online with a token
   seen-reset   Reset the configuration rollback watermark of a credential
+  replica-add  Register a standby controller and write its credential
+  replica-remove Remove a standby controller
   renew        Renew this device's certificate if it is due
   version      Show build information
 
@@ -638,6 +640,7 @@ func Run(args []string) error {
 		maxConns := f.Int("max-conns", relay.DefaultListenerLimits.Total, "maximum concurrent TCP connections")
 		maxPerIP := f.Int("max-conns-per-ip", relay.DefaultListenerLimits.PerSource, "maximum concurrent TCP connections per source IP (0 disables)")
 		ratePerIP := f.Float64("conn-rate-per-ip", relay.DefaultListenerLimits.RatePerSource, "new TCP connections per second per source IP (0 disables)")
+		standbyCred := f.String("standby", "", "run as read-only standby replicating from the primary named in this replica credential")
 		logging := addLogFlags(f)
 		if err := f.Parse(args[1:]); err != nil {
 			return err
@@ -648,6 +651,20 @@ func Run(args []string) error {
 		if err := logging.configure(); err != nil {
 			return err
 		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		var replica *core.ReplicaCredential
+		var rep *replicator
+		if *standbyCred != "" {
+			cred, err := readReplicaCredential(*standbyCred)
+			if err != nil {
+				return err
+			}
+			replica = &cred
+			if rep, err = prepareStandby(ctx, cred, *dir); err != nil {
+				return err
+			}
+		}
 		s, err := core.LoadState(*dir)
 		if err != nil {
 			return err
@@ -655,7 +672,7 @@ func Run(args []string) error {
 		if s.Config.Policy == nil {
 			return fmt.Errorf("state has no policy section (pre-policy format); run 'kinfold policy-enable -data %s' and add allow rules before serving", *dir)
 		}
-		if s.ConfigKey == nil {
+		if s.ConfigKey == nil && replica == nil {
 			// States from before v0.4 have no configuration signing key.
 			if s, err = addConfigKey(*dir); err != nil {
 				return err
@@ -667,11 +684,13 @@ func Run(args []string) error {
 			return err
 		}
 		tlsCfg, err := relay.TLSConfig(s)
+		if replica != nil {
+			handler.SetStandby()
+			tlsCfg, err = relay.TLSConfigWithServer(s, replica.ServerCert, replica.ServerKey)
+		}
 		if err != nil {
 			return err
 		}
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
 		rejected := handler.Metrics().Counter("kinfold_listener_rejected_total", "Connections closed by per-source limits.", nil)
 		limits := relay.ListenerLimits{Total: *maxConns, PerSource: *maxPerIP, RatePerSource: *ratePerIP, BurstPerSource: max(*maxPerIP, 1), OnReject: rejected.Inc}
 		handler.Metrics().GaugeFunc("kinfold_build_info", "Build information.", metrics.Labels{"version": Version}, func() float64 { return 1 })
@@ -686,9 +705,14 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
-		handler.SetRenewer(controllerRenewer(*dir, time.Now))
 		tokens := newTokenCache(*dir, s)
-		handler.SetEnroller(controllerEnroller(*dir, time.Now, tokens))
+		if replica == nil {
+			handler.SetRenewer(controllerRenewer(*dir, time.Now))
+			handler.SetEnroller(controllerEnroller(*dir, time.Now, tokens))
+		} else {
+			go rep.run(ctx)
+			slog.Info("running as standby", "primary", replica.Primary, "address", replica.Address)
+		}
 		server := newControllerServer(handler, tlsCfg, defaultServerTimeouts)
 		for _, warning := range s.CertificateWarnings(time.Now(), 30*24*time.Hour) {
 			slog.Warn(warning)
@@ -976,6 +1000,65 @@ func Run(args []string) error {
 			return err
 		}
 		fmt.Println("Configuration watermark removed. Only do this after the controller's clock was set back; the next run accepts the controller's current configuration as the new baseline.")
+		return nil
+	case "replica-add":
+		f := flags("replica-add")
+		dir := f.String("data", "controller-data", "controller data directory")
+		id := f.String("id", "", "replica ID")
+		address := f.String("address", "", "host:port devices use to reach the standby")
+		out := f.String("out", "", "new replica credential file (contains private keys)")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		if *id == "" || *address == "" || *out == "" {
+			return fmt.Errorf("-id, -address and -out are required")
+		}
+		s, lock, err := loadWritableState(*dir)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		cred, err := s.AddReplica(*id, *address)
+		if err != nil {
+			return err
+		}
+		data, err := json.MarshalIndent(cred, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := writeNew(*out, append(data, '\n')); err != nil {
+			return err
+		}
+		if err := core.WriteJSON(filepath.Join(*dir, "state.json"), s); err != nil {
+			return fmt.Errorf("replica credential written to %s; controller state update failed: %w", *out, err)
+		}
+		fmt.Printf("Added standby %s at %s. Transfer %s securely to the standby host; it receives a full copy of the controller state, including the CA key.\n", *id, *address, *out)
+		return nil
+	case "replica-remove":
+		f := flags("replica-remove")
+		dir := f.String("data", "controller-data", "controller data directory")
+		id := f.String("id", "", "replica ID")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		s, lock, err := loadWritableState(*dir)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		if !s.RemoveReplica(*id) {
+			return fmt.Errorf("unknown replica %q", *id)
+		}
+		if err := core.WriteJSON(filepath.Join(*dir, "state.json"), s); err != nil {
+			return err
+		}
+		fmt.Printf("Removed standby %s; it can no longer replicate. Its copy of the state still contains the CA key: destroy it.\n", *id)
 		return nil
 	case "version":
 		f := flags("version")

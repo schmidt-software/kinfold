@@ -262,6 +262,7 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 		}
 		fetch := func(ctx context.Context, _ core.Credential) (core.Config, string, error) { return client.Fetch(ctx) }
 		client.SetNotBefore(readSeen(path))
+		client.SetControllers(readControllers(path))
 		persistDone := make(chan struct{})
 		go func() {
 			defer close(persistDone)
@@ -271,13 +272,15 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 				select {
 				case <-runCtx.Done():
 					writeSeen(path, client.NotBefore())
+					writeControllers(path, client.Controllers())
 					return
 				case <-ticker.C:
 					writeSeen(path, client.NotBefore())
+					writeControllers(path, client.Controllers())
 				}
 			}
 		}()
-		var runOpts []agent.Option
+		runOpts := []agent.Option{agent.WithController(client.Current)}
 		if direct.dial || direct.listen != "" {
 			var endpoints func(string) []string
 			if direct.dial { // -direct-dial=false: accept only (v0.4 review finding 7)
