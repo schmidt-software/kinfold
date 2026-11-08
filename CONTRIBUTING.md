@@ -24,12 +24,12 @@ No direct commits to `main`.
 
 ## License of contributions
 
-Kinfold is licensed under the PolyForm Noncommercial License 1.0.0, and the
-licensor also grants commercial licenses (see README.md, "License"). By
-submitting a contribution you agree that it is licensed under the same
-noncommercial license, and you grant the licensor a perpetual, worldwide,
-royalty-free right to also license your contribution under other terms,
-including commercial licenses. Only submit work that you have the right to
+Kinfold is licensed under the GNU Affero General Public License version 3
+(`AGPL-3.0-only`, see `LICENSE`). By submitting a contribution you agree
+that it is licensed under the same license, and you grant the copyright
+holder a perpetual, worldwide, royalty-free right to also license your
+contribution under other terms (for example a commercial license for users
+who cannot meet the AGPL). Only submit work that you have the right to
 license this way.
 
 ## Rules

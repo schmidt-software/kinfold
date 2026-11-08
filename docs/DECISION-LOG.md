@@ -889,7 +889,7 @@ the attachment, the links and the command reference.
 except for corrections of factual errors. The German guide is a full
 translation, so it has to be kept in step by hand.
 
-## D-039 — 2026-11-08 — active — PolyForm Noncommercial license
+## D-039 — 2026-11-08 — superseded by D-040 — PolyForm Noncommercial license
 
 **Decision:** Kinfold is licensed under the PolyForm Noncommercial License
 1.0.0 (`LICENSE.md`, official text verbatim, with a `Required Notice`
@@ -910,3 +910,25 @@ dual licensing possible once outside contributions arrive.
 **Consequences:** Kinfold is source-available, not open source in the OSI
 sense. The license is not legal advice, and terms for commercial licenses
 have yet to be defined by the owner.
+
+## D-040 — 2026-11-08 — active — AGPL-3.0 license
+
+**Decision:** Kinfold is licensed under the GNU Affero General Public
+License version 3 only (`AGPL-3.0-only`). `LICENSE` holds the unmodified
+official text from gnu.org, so that tools detect it. The copyright notice
+and a short summary are in the README "License" section. The license covers
+all versions published in this repository. Contributions are accepted under
+the same license, together with a grant that lets the copyright holder also
+offer separate commercial licenses (CONTRIBUTING.md). This replaces the
+PolyForm Noncommercial license of D-039.
+
+**Rationale:** The owner decided on the AGPL-3.0. It is an OSI-approved
+open source license, and its network clause (section 13) also covers the
+main deployment form of Kinfold, a controller operated as a service:
+whoever runs a modified controller for others must offer its source. "Only"
+rather than "or later" keeps the choice of future license versions with
+the copyright holder. The inbound grant keeps dual licensing possible.
+
+**Consequences:** Commercial use is allowed under the AGPL's conditions.
+A commercial license is only needed by those who cannot or will not meet
+them. Kinfold is now open source in the OSI sense.
