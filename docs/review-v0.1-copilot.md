@@ -223,3 +223,26 @@ A second review of the fixes found three more issues, fixed in #92: a
 standby going stale kept the relay sessions it already carried,
 `replica-promote` could be overwritten by a standby that was still running,
 and promotion did not reject a host name equal to a device ID.
+
+## Review before v0.6.0-alpha
+
+An independent review of `v0.5.0-alpha..a28c91f` covered the relay bandwidth
+limit, the device status metrics, the write order, the macOS changes and the
+release tooling. It found no high or medium issues. It confirmed:
+- the lock order between metric families and the relay mutex;
+- the bandwidth accounting across concurrent sessions;
+- the write-order recovery paths;
+- that the release gate runs before anything is published.
+
+Findings, fixed in #117:
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 1 | L | `-relay-rate`/`-relay-burst` accepted values that switched the limit off (Inf after suffix scaling, overflowing pauses below 1 B/s, a burst without a rate). | Refused; the log shows the effective values. |
+| 2 | L | Buckets and throttle series of removed devices were never freed. | Freed with the device's status. |
+| 3 | L | A configuration fetch racing with a removal re-created the device's status. | Only current members are recorded. |
+| 4 | L | A throttled bridge outlived a superseded connection and kept its partner endpoint counted. | Per-bridge stop function, called by `supersede`. |
+| 5 | L | `cli-reference.sh` failed silently on a bad ref. | Error message. |
+
+A second review of the fixes found that `invalidate` and `invalidatePairs`
+did not end paused bridges either (L). They now call the same stop function.
