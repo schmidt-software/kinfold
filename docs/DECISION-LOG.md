@@ -679,3 +679,35 @@ promotion working when the standby's own certificate is close to expiry.
 **Consequences:** Promotion stays manual and requires stopping the standby
 briefly. Other standbys must be re-created after a promotion because their
 credentials name the old primary.
+
+## D-031 — 2026-11-08 — active — Bounded standby staleness
+
+**Decision:** A standby serves its replicated state only while it is fresh:
+- After a failed replication it keeps serving for at most
+  `-standby-max-age` (default one hour). After that it answers
+  configuration and relay requests with a marked 503 ("standby state is
+  stale"), so devices keep their grace period and try other controllers.
+- A 403 from the primary (the standby was removed) stops it at once.
+- At startup it falls back to the stored state only when the primary is
+  unreachable on the network and the state is younger than the maximum
+  age. A refusal or an invalid state from the primary stops the start.
+- The time of the last successful replication is the modification time of
+  the stored state, touched on every successful pull. It is exported as
+  `kinfold_standby_last_replication_timestamp_seconds`.
+- The standby checks the primary's server certificate for signature and
+  name but not for expiry.
+- Registered standby certificates appear in the certificate warnings, and a
+  standby warns about its own credential.
+
+**Rationale:** Pre-release review of v0.5 (findings 4, 5, 7). An unbounded
+standby kept signing fresh configurations from an arbitrarily old state, so
+a cut replication link or `replica-remove` meant revocations never reached
+it. Its devices dropped their tunnels at once when the primary's
+certificate expired during an outage. One hour covers short outages and
+maintenance. Longer outages call for promotion (D-030), and administration
+needs the primary anyway.
+
+**Consequences:** A revocation made while the standby cannot reach the
+primary takes up to the maximum age to reach devices on the standby. A
+standby that is down longer than the maximum age together with the primary
+cannot be started until the primary is back or it is promoted.

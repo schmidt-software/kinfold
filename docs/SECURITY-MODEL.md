@@ -109,9 +109,14 @@ basis for a five-minute assurance.
 Since v0.5 a standby controller can serve devices (DECISION-LOG D-028). It
 holds a full copy of the state, including the CA and configuration signing
 keys, and is therefore as trusted as the primary. Replication requires a
-CA-signed client certificate registered as replica; a standby lags the
-primary by up to two seconds, so a revocation reaches devices served by the
-standby correspondingly later. There is no quorum: two controllers acting as
+CA-signed client certificate registered as replica; while replication
+works, a standby lags the primary by up to two seconds, so a revocation
+reaches devices served by the standby correspondingly later. When
+replication fails, the standby keeps serving its last state for at most
+`-standby-max-age` (default one hour, D-031) and stops at once when the
+primary refuses it (`replica-remove`). A revocation made on the primary while
+the standby cannot reach it can therefore take up to that long to reach
+devices that use the standby. There is no quorum: two controllers acting as
 primary would issue diverging, equally valid configurations.
 
 ## Production contract: identity, policy and networks
