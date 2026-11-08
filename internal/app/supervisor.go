@@ -191,9 +191,38 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 // current revision independently (D-013).
 const fetchGrace = 30 * time.Second
 
-func runSupervised(ctx context.Context, cred core.Credential, cfg core.Config, id, iface string) error {
-	client := agent.NewConfigClient(cred)
-	defer client.Close()
-	fetch := func(ctx context.Context, _ core.Credential) (core.Config, string, error) { return client.Fetch(ctx) }
-	return supervise(ctx, cred, iface, cfg, id, 2*time.Second, fetchGrace, agent.OpenTunnel, fetch, agent.Run)
+// runSupervised runs the tunnel and, when autoRenew is set, renews the
+// device certificate in the background. A renewal restarts the tunnel with
+// the new credential.
+func runSupervised(ctx context.Context, path string, cred core.Credential, cfg core.Config, id, iface string, autoRenew bool) error {
+	for {
+		client := agent.NewConfigClient(cred)
+		runCtx, cancel := context.WithCancel(ctx)
+		renewed := make(chan core.Credential, 1)
+		if autoRenew {
+			go func() {
+				renewLoop(runCtx, path, cred, client, renewed)
+				if len(renewed) > 0 {
+					cancel() // stop the tunnel; it restarts below with the new credential
+				}
+			}()
+		}
+		fetch := func(ctx context.Context, _ core.Credential) (core.Config, string, error) { return client.Fetch(ctx) }
+		err := supervise(runCtx, cred, iface, cfg, id, 2*time.Second, fetchGrace, agent.OpenTunnel, fetch, agent.Run)
+		cancel()
+		client.Close()
+		select {
+		case next := <-renewed:
+			if err != nil {
+				return err
+			}
+			cred = next
+			if cfg, id, err = fetchAfterRenewal(ctx, cred); err != nil {
+				return err
+			}
+			slog.Info("restarting tunnel with renewed certificate", "peer", id)
+		default:
+			return err
+		}
+	}
 }
