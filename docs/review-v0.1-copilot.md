@@ -178,3 +178,24 @@ fixed in #71:
 | 5 | L | Token on the command line. | `-token-file` (or `-` for stdin). |
 | 6 | L | Go quoting instead of Prometheus label escaping. | Prometheus escaping. |
 | 7 | L | Data race in a supervisor test. | Test clones the configuration. |
+
+## Review before v0.4.0-alpha
+
+An independent review of `v0.3.0-alpha..87ff094` (signed configuration,
+direct path) found no critical or high issues and confirmed that the signed
+payload is unambiguous, key pinning cannot be downgraded, a non-controller
+cannot trigger the immediate fail-closed and the direct path cannot be
+redirected to an impostor. Findings, all fixed in #79:
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 1 | M | The configuration that starts the tunnel ignored the persisted rollback watermark. | Start-up and post-renewal fetches honour and update `.seen`. |
+| 2 | M | Peer IDs differing only in case broke signed payloads (case-folded duplicate keys). | IDs must be unique ignoring case. |
+| 3 | M | Fast device clocks rejected every configuration; a controller clock stepping back locked clients out. | Lease measured from receipt on the device; staleness with ±5 min tolerance; strictly increasing issue times per controller process; `seen-reset` for recovery. |
+| 4 | L | The newest envelope could be replayed. | Strictly newer issue time required. |
+| 5 | L | The direct listener could be exhausted by one source. | At most two pending handshakes per source, 5 s handshake deadline. |
+| 6 | L | A completed TLS 1.3 handshake counted as acceptance; session leaks while switching. | Acceptance marker from the acceptor; newest direct session wins; deliveries to stopped links refused; leaks closed. |
+| 7 | L | `-direct-dial=false` ignored with `-direct-listen`. | Fixed. |
+| 8 | L | Devices could make peers dial arbitrary addresses. | Advertised addresses must be private; public only as observed. |
+| 9 | L | A controller restart made clients close at once (503). | Shutdown answers are marked and keep the grace period. |
+| 10 | L | Token-enrolled credentials lacked the configuration key. | Sent with the enrollment response over the pinned connection. |
