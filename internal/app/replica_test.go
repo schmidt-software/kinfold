@@ -1,0 +1,153 @@
+package app
+
+import (
+	"context"
+	"net"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/schmidt-software/kinfold/internal/agent"
+	"github.com/schmidt-software/kinfold/internal/core"
+	"github.com/schmidt-software/kinfold/internal/relay"
+)
+
+// runTestController serves dir on addr (standby when replica is set) until
+// the returned stop function is called.
+func runTestController(t *testing.T, dir, addr string, replica *core.ReplicaCredential) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	if replica != nil {
+		rep, err := prepareStandby(ctx, *replica, dir)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		go rep.run(ctx)
+	}
+	state, err := core.LoadState(dir)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	handler, err := relay.NewForState(state)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	tlsCfg, err := relay.TLSConfig(state)
+	if replica != nil {
+		handler.SetStandby()
+		tlsCfg, err = relay.TLSConfigWithServer(state, replica.ServerCert, replica.ServerKey)
+	}
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	ln, err := listenController(ctx, addr, relay.DefaultListenerLimits)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- serveController(ctx, newControllerServer(handler, tlsCfg, defaultServerTimeouts), ln, handler, func(ctx context.Context) {
+			handler.Watch(ctx.Done(), state, func() (*core.State, error) { return core.LoadState(dir) }, 50*time.Millisecond)
+		}, time.Second)
+	}()
+	stopped := false
+	stop = func() {
+		if !stopped {
+			stopped = true
+			cancel()
+			<-done
+		}
+	}
+	t.Cleanup(stop)
+	return stop
+}
+
+func TestStandbyServesWhenPrimaryIsDown(t *testing.T) {
+	primaryDir := filepath.Join(t.TempDir(), "primary")
+	if err := core.InitState(primaryDir, "localhost:8443", "10.77.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	credPath := filepath.Join(t.TempDir(), "alice.json")
+	if err := Run([]string{"add-peer", "-data", primaryDir, "-id", "alice", "-ip", "10.77.0.1", "-out", credPath}); err != nil {
+		t.Fatal(err)
+	}
+	primaryAddr, standbyAddr := freeLocal(t), freeLocal(t)
+	_, standbyPort, _ := net.SplitHostPort(standbyAddr)
+	replicaPath := filepath.Join(t.TempDir(), "standby.json")
+	if err := Run([]string{"replica-add", "-data", primaryDir, "-id", "standby", "-address", "localhost:" + standbyPort, "-out", replicaPath}); err != nil {
+		t.Fatal(err)
+	}
+	replica, err := readReplicaCredential(replicaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, primaryPort, _ := net.SplitHostPort(primaryAddr)
+	replica.Primary = "localhost:" + primaryPort
+	stopPrimary := runTestController(t, primaryDir, primaryAddr, nil)
+	standbyDir := filepath.Join(t.TempDir(), "standby")
+	runTestController(t, standbyDir, standbyAddr, &replica)
+	// A change on the primary reaches the standby within a few seconds.
+	if err := Run([]string{"add-peer", "-data", primaryDir, "-id", "bob", "-ip", "10.77.0.2", "-out", filepath.Join(t.TempDir(), "bob.json")}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if st, err := core.LoadState(standbyDir); err == nil {
+			if _, ok := st.Config.Peer("bob"); ok {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("standby did not replicate a change on the primary")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	var cred core.Credential
+	if err := core.ReadJSON(credPath, &cred); err != nil {
+		t.Fatal(err)
+	}
+	cred.Server = "localhost:" + primaryPort
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	client := agent.NewConfigClient(cred)
+	defer client.Close()
+	if _, id, err := client.Fetch(ctx); err != nil || id != "alice" {
+		t.Fatalf("fetch from primary: %q %v", id, err)
+	}
+	if got := client.Controllers(); len(got) != 2 || !strings.HasSuffix(got[1], ":"+standbyPort) {
+		t.Fatalf("controller list %v", got)
+	}
+
+	stopPrimary()
+	cfg, id, err := client.Fetch(ctx)
+	if err != nil || id != "alice" || len(cfg.Peers) != 1 {
+		t.Fatalf("fetch after primary failure: %q %v", id, err)
+	}
+	if got := client.Current(); got != "localhost:"+standbyPort {
+		t.Fatalf("client uses %s, want the standby", got)
+	}
+	if _, err := client.Renew(ctx, []byte("csr")); err == nil || errorsIsRefused(err) {
+		t.Fatalf("standby renewal: %v (must fail, but not as a refusal)", err)
+	}
+}
+
+func freeLocal(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().String()
+}
+
+func errorsIsRefused(err error) bool {
+	return err != nil && strings.Contains(err.Error(), agent.ErrRefused.Error())
+}

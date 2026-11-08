@@ -213,10 +213,12 @@ func fetchWithWatermark(ctx context.Context, path string, cred core.Credential) 
 	defer client.Close()
 	if path != "" {
 		client.SetNotBefore(readSeen(path))
+		client.SetControllers(readControllers(path))
 	}
 	cfg, id, err := client.Fetch(ctx)
 	if err == nil && path != "" {
 		writeSeen(path, client.NotBefore())
+		writeControllers(path, client.Controllers())
 	}
 	return cfg, id, err
 }
