@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Kinfold client as a macOS launch daemon (runs as root; utun needs it).
+
+  Install:
+    sudo install -m 0755 kinfold /usr/local/bin/kinfold
+    sudo install -d -m 0700 "/Library/Application Support/Kinfold"
+    sudo install -m 0600 alice.json "/Library/Application Support/Kinfold/credential.json"
+    sudo install -m 0644 kinfold-client.plist /Library/LaunchDaemons/kinfold-client.plist
+    sudo launchctl bootstrap system /Library/LaunchDaemons/kinfold-client.plist
+
+  Status and logs:
+    sudo launchctl print system/kinfold-client
+    tail -f /var/log/kinfold-client.log
+
+  Remove:
+    sudo launchctl bootout system/kinfold-client
+    sudo rm /Library/LaunchDaemons/kinfold-client.plist
+
+  The credential directory must stay writable for root: the client renews
+  its certificate there and keeps the .seen and .controllers files next to
+  the credential.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>kinfold-client</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/kinfold</string>
+		<string>run</string>
+		<string>-credential</string>
+		<string>/Library/Application Support/Kinfold/credential.json</string>
+		<string>-log-format</string>
+		<string>json</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>StandardOutPath</key>
+	<string>/var/log/kinfold-client.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/kinfold-client.log</string>
+</dict>
+</plist>
