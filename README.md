@@ -4,7 +4,7 @@
 
 A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux devices. A controller you run yourself admits devices explicitly, hands out fixed addresses and directional rules, and relays end-to-end encrypted sessions between them. Kinfold implements its own protocol and is not compatible with any other VPN or overlay product.
 
-> **Status: alpha (`v0.3.0-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor and a single point of failure; all traffic passes through its relay. See [Known limits](#known-limits).
+> **Status: alpha (`v0.3.0-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor and a single point of failure; traffic passes through its relay unless devices can reach each other directly. See [Known limits](#known-limits).
 
 ## Features
 
@@ -26,7 +26,7 @@ A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux devices.
 - Clients ride out controller restarts (30 s grace period), reconnect with backoff and detect dead paths in seconds.
 - Structured logging (`log/slog`, text or JSON), `kinfold version`, hardened systemd units, reproducible release builds with checksums, and an [operator guide](docs/OPERATIONS.md).
 
-**Not included:** direct peer-to-peer connections, NAT traversal, UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, non-Linux clients, controller high availability. `status` shows the authorized members, not live connection state.
+**Not included:** NAT traversal (hole punching), UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, non-Linux clients, controller high availability. `status` shows the authorized members, not live connection state.
 
 **Documentation:** [operator guide](docs/OPERATIONS.md) · [security model](docs/SECURITY-MODEL.md) · [architecture decisions](docs/DECISIONS.md) · [decision log](docs/DECISION-LOG.md) · [code review of the prototype](docs/review-v0.1-copilot.md) · [contributing](CONTRIBUTING.md)
 
@@ -92,6 +92,18 @@ The controller runs on Linux or macOS; the VPN client currently requires **Linux
 `serve` and `run` log to stderr via `log/slog`. `-log-format text|json` selects the format, `-log-level debug|info|warn|error` the minimum level (default `info`). Per-packet drop messages (MTU exceeded, peer queue full) are logged at `debug` level so they cannot flood production logs.
 
 Administrators can use `./kinfold check-config -data controller-data -credential admin-peer.json` to check whether the authenticated controller has loaded the same configuration as a local snapshot of the state file. The credential must belong to a device that is still authorized. The command prints both configuration hashes and returns an error on mismatch or reachability failure. It does not prove that clients have already adopted the configuration.
+
+## Direct connections
+
+Devices that can reach each other — on the same LAN, or with a public or port-forwarded address — can bypass the relay. Start the client with `-direct-listen :51900` (any free port) on devices that should accept direct sessions:
+
+```sh
+sudo ./kinfold-linux run -credential alice.json -direct-listen :51900
+```
+
+The device reports the port and its local addresses with every configuration fetch; the controller adds the address it observed, keeps the list in memory for 30 seconds and hands it to the device's peers inside their signed configuration. A device dials a peer directly if the peer listens and either the device itself does not listen or has the smaller ID (so two devices never build two sessions); otherwise, or when no address works, the relay is used as before. A session that started on the relay switches to the direct path as soon as one becomes available (first after about three seconds, then every 30 seconds). `-direct-dial=false` turns dialing off.
+
+Direct sessions use the same mutual TLS 1.3 as relayed ones (exact certificate pin, CA chain, role key usage, certificate deadlines) and the same packet checks. The listener only accepts devices that have a rule with it in its current signed configuration. Revocation no longer relies on the relay alone: a configuration change restarts the affected sessions on both ends, a device whose configuration fetch is refused by the controller (removed device, invalid controller state) closes its tunnel immediately, and an unreachable controller ends all sessions after 30 seconds or when the two-minute lease runs out. There is no NAT hole punching: two devices that are both behind NAT without port forwarding keep using the relay.
 
 ## Running as a service
 

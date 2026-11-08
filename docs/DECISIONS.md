@@ -28,7 +28,7 @@ Established peer sessions get a local I/O deadline based on the earliest expiry 
 
 **Rationale:** The path is demonstrable, works without inbound client ports and can be tested with real virtual interfaces.
 
-**Consequences:** No direct connections and no UDP-based NAT traversal optimization. A full mesh scales quadratically; TCP-over-TCP and the central relay cause performance and availability disadvantages. The relay path is not hardened against abuse by authorized devices.
+**Consequences:** Initially no direct connections; since v0.4 devices that can reach each other may use a direct TCP path (DECISION-LOG D-026), still without UDP or NAT traversal. A full mesh scales quadratically; TCP-over-TCP and the central relay cause performance and availability disadvantages. The relay path is not hardened against abuse by authorized devices.
 
 On controlled shutdown, relay sessions are closed immediately; for running HTTP requests the controller waits up to five seconds and reports a timeout as an error. The configuration watcher is stopped and awaited. This is a local lifecycle mechanism, not an uninterrupted failover.
 
