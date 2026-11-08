@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -706,6 +708,8 @@ func Run(args []string) error {
 		iface := f.String("interface", "kf0", "new Linux TUN interface name")
 		metricsAddr := f.String("metrics", "", "serve Prometheus metrics on this loopback host:port (run only; disabled when empty)")
 		autoRenew := f.Bool("auto-renew", true, "renew the device certificate automatically before it expires (run only)")
+		directListen := f.String("direct-listen", "", "accept direct peer sessions on this host:port, e.g. :51900 (run only; empty disables)")
+		directDial := f.Bool("direct-dial", true, "dial peers that accept direct sessions before falling back to the relay (run only)")
 		logging := addLogFlags(f)
 		if err := f.Parse(args[1:]); err != nil {
 			return err
@@ -782,7 +786,15 @@ func Run(args []string) error {
 			}
 			slog.Info("metrics listening", "address", addr.String())
 		}
-		return runSupervised(ctx, *path, cred, cfg, id, *iface, *autoRenew)
+		direct := directOptions{dial: *directDial, listen: *directListen}
+		if *directListen != "" {
+			_, port, err := net.SplitHostPort(*directListen)
+			if direct.port, err = strconv.Atoi(port); err != nil || direct.port < 1 || direct.port > 65535 {
+				return fmt.Errorf("-direct-listen needs an explicit port, e.g. :51900")
+			}
+			direct.addrs = localAddresses()
+		}
+		return runSupervised(ctx, *path, cred, cfg, id, *iface, *autoRenew, direct)
 	case "renew":
 		f := flags("renew")
 		path := f.String("credential", "", "private peer credential file to renew in place")
