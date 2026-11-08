@@ -97,12 +97,13 @@ the standby host (see the README). Operational rules:
   its metric `kinfold_standby_last_replication_timestamp_seconds`. A standby
   that cannot replicate keeps serving its last state for `-standby-max-age`
   (default `1h`), then answers devices with "standby state is stale" until
-  replication works again; a standby removed with `replica-remove` stops at
-  once. It starts from its stored state only when the primary is
+  replication works again, closing the relay sessions it carried; a standby
+  removed with `replica-remove` stops at once. It starts from its stored state only when the primary is
   unreachable and that state is younger than the maximum age. For a longer
   primary outage, promote the standby (below) instead of raising the limit.
 - **Promotion** (primary lost): make sure the old primary cannot come back
-  (power off, block its address), stop the standby and run
+  (power off, block its address), stop the standby (a running standby
+  holds its data directory lock, so the command refuses to run) and run
   `kinfold replica-promote -data /var/lib/kinfold-controller/state -standby standby.json`
   on it. This sets the controller address in the state to the standby's own
   address, issues a server certificate for it and removes the standby's
@@ -194,7 +195,7 @@ Start the controller with `-metrics 127.0.0.1:9100` and clients with
 | `kinfold_config_available` | controller | 0 while the state is invalid and the relay is closed. Alert on 0. |
 | `kinfold_config_reloads_total{result}` | controller | `applied`, `unchanged`, `failed` reloads of `state.json`. |
 | `kinfold_relay_endpoints`, `kinfold_relay_waiting` | controller | Current relay load. |
-| `kinfold_relay_sessions_closed_total{reason}` | controller | `config_change`, `unavailable`, `superseded`. |
+| `kinfold_relay_sessions_closed_total{reason}` | controller | `config_change`, `unavailable`, `superseded`, `stale` (standby). |
 | `kinfold_relay_rejections_total{status}`, `kinfold_listener_rejected_total` | controller | Rejected requests and connections over per-source limits. |
 | `kinfold_renewals_total` | controller | Device certificates issued by online renewal. |
 | `kinfold_standby_last_replication_timestamp_seconds` | standby | Last successful replication. Alert when older than a few minutes. |

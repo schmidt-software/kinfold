@@ -677,6 +677,11 @@ moving the primary onto a standby's address produced a state that no longer
 loaded. Issuing a fresh certificate instead of reusing the standby's keeps
 promotion working when the standby's own certificate is close to expiry.
 
+Amended after the review of the fixes (#92): a running standby holds its
+data directory lock for its whole lifetime, so `replica-promote` cannot be
+overwritten by a live standby's next replication, and promotion (like
+`replica-add`) refuses a host name equal to a device ID.
+
 **Consequences:** Promotion stays manual and requires stopping the standby
 briefly. Other standbys must be re-created after a promotion because their
 credentials name the old primary.
@@ -699,6 +704,8 @@ credentials name the old primary.
   name but not for expiry.
 - Registered standby certificates appear in the certificate warnings, and a
   standby warns about its own credential.
+- Going stale also closes the relay sessions the standby carried (#92).
+  Otherwise they would outlive the bound.
 
 **Rationale:** Pre-release review of v0.5 (findings 4, 5, 7). An unbounded
 standby kept signing fresh configurations from an arbitrarily old state, so
