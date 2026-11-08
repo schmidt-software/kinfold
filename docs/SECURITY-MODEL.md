@@ -106,6 +106,14 @@ or suspend, is not proof of a real-time bound; the relay does not enforce it
 itself. The existing implementation must therefore not be presented as the
 basis for a five-minute assurance.
 
+Since v0.5 a standby controller can serve devices (DECISION-LOG D-028). It
+holds a full copy of the state, including the CA and configuration signing
+keys, and is therefore as trusted as the primary. Replication requires a
+CA-signed client certificate registered as replica; a standby lags the
+primary by up to two seconds, so a revocation reaches devices served by the
+standby correspondingly later. There is no quorum: two controllers acting as
+primary would issue diverging, equally valid configurations.
+
 ## Production contract: identity, policy and networks
 
 - Every device generates and protects its private key locally; an enrollment

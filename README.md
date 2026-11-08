@@ -4,7 +4,7 @@
 
 A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux devices. A controller you run yourself admits devices explicitly, hands out fixed addresses and directional rules, and relays end-to-end encrypted sessions between them. Kinfold implements its own protocol and is not compatible with any other VPN or overlay product.
 
-> **Status: alpha (`v0.4.0-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor and a single point of failure; traffic passes through its relay unless devices can reach each other directly. See [Known limits](#known-limits).
+> **Status: alpha (`v0.4.0-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor; a standby controller can take over when it fails, and traffic passes through the relay unless devices can reach each other directly. See [Known limits](#known-limits).
 
 ## Features
 
@@ -26,7 +26,7 @@ A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux devices.
 - Clients ride out controller restarts (30 s grace period), reconnect with backoff and detect dead paths in seconds.
 - Structured logging (`log/slog`, text or JSON), `kinfold version`, hardened systemd units, reproducible release builds with checksums, and an [operator guide](docs/OPERATIONS.md).
 
-**Not included:** NAT traversal (hole punching), UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, non-Linux clients, controller high availability. `status` shows the authorized members, not live connection state.
+**Not included:** NAT traversal (hole punching), UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, non-Linux clients, automatic controller failover with quorum. `status` shows the authorized members, not live connection state.
 
 **Documentation:** [operator guide](docs/OPERATIONS.md) · [security model](docs/SECURITY-MODEL.md) · [architecture decisions](docs/DECISIONS.md) · [decision log](docs/DECISION-LOG.md) · [code review of the prototype](docs/review-v0.1-copilot.md) · [contributing](CONTRIBUTING.md)
 
@@ -104,6 +104,24 @@ sudo ./kinfold-linux run -credential alice.json -direct-listen :51900
 The device reports the port and its local addresses with every configuration fetch; the controller adds the address it observed, keeps the list in memory for 30 seconds and hands it to the device's peers inside their signed configuration. A device dials a peer directly if the peer listens and either the device itself does not listen or has the smaller ID (so two devices never build two sessions); otherwise, or when no address works, the relay is used as before. A session that started on the relay switches to the direct path as soon as one becomes available (first after about three seconds, then every 30 seconds). `-direct-dial=false` turns dialing off.
 
 Direct sessions use the same mutual TLS 1.3 as relayed ones (exact certificate pin, CA chain, role key usage, certificate deadlines) and the same packet checks. The listener only accepts devices that have a rule with it in its current signed configuration. Revocation no longer relies on the relay alone: a configuration change restarts the affected sessions on both ends, a device whose configuration fetch is refused by the controller (removed device, invalid controller state) closes its tunnel immediately, and an unreachable controller ends all sessions after 30 seconds or when the two-minute lease runs out. There is no NAT hole punching: two devices that are both behind NAT without port forwarding keep using the relay.
+
+## Standby controller
+
+A standby controller keeps a copy of the controller state and serves devices when the primary is down. On the primary:
+
+```sh
+./kinfold replica-add -data controller-data -id standby -address vpn2.example.com:8443 -out standby.json
+```
+
+Transfer `standby.json` securely to the standby host (it lets the standby fetch the complete state, including the CA and signing keys) and start it with:
+
+```sh
+./kinfold serve -data standby-data -listen :8443 -standby standby.json
+```
+
+The standby pulls the state from the primary every two seconds, checks it like a normal load and serves signed configuration and the relay under its own address; it refuses certificate renewal and token enrollment, which stay with the primary. Devices learn the controller addresses from their signed configuration (and remember them next to the credential), switch to the next controller when the current one is unreachable, and try the primary again every minute. Devices served by different controllers cannot be relayed to each other, but can still use the direct path.
+
+Failover of the *administration* is manual: if the primary is gone for good, stop it permanently and restart the standby without `-standby` — it then is the primary. Never run two primaries at the same time. There is no quorum or automatic leader election (#63); a change made on the primary in the last two seconds before it fails can be missing on the standby. Controllers' clocks must be synchronised (NTP), because devices only accept configurations that are newer than the last one they saw.
 
 ## Running as a service
 

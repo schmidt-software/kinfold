@@ -84,6 +84,26 @@ Then set `"server": "vpn2.example.com:8443"` in every device credential and
 restart its client. CA, device certificates and keys are unchanged. Devices
 cannot connect between the controller restart and their credential update.
 
+## Standby controller
+
+Set up a standby with `replica-add` on the primary and `serve -standby` on
+the standby host (see the README). Operational rules:
+
+- Run administrative commands on the primary only; the standby overwrites
+  its state with the primary's every two seconds.
+- Monitor the standby's log for `replication from the primary failed`.
+- **Promotion** (primary lost): make sure the old primary cannot come back
+  (power off, block its address), then restart the standby without
+  `-standby`. Devices keep using it; renewals and enrollment work again.
+  When the old host returns, set it up as a new standby with `replica-add`
+  on the new primary.
+- **Removing a standby**: `replica-remove -id standby` on the primary stops
+  its replication; destroy its data directory and credential, they contain
+  the CA key.
+- Two controllers serving as primary at the same time give devices
+  diverging configurations; devices accept whichever is newer, so changes
+  can appear and disappear. Avoid it.
+
 ## CA rotation
 
 There is no automated CA rotation in this version. Rotating the CA means
