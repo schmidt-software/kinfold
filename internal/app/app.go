@@ -204,11 +204,13 @@ func Run(args []string) error {
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		remote, _, err := agent.FetchConfig(ctx, cred)
+		remote, id, err := agent.FetchConfig(ctx, cred)
 		if err != nil {
 			return err
 		}
-		localRevision, err := local.Config.Revision()
+		// The controller serves each device only its own view; compare the
+		// same view of the on-disk state.
+		localRevision, err := local.Config.ForPeer(id).Revision()
 		if err != nil {
 			return err
 		}
