@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,15 +21,18 @@ import (
 func runTestController(t *testing.T, dir, addr string, replica *core.ReplicaCredential) (stop func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
+	load := core.LoadState
+	var rep *replicator
 	if replica != nil {
-		rep, err := prepareStandby(ctx, *replica, dir)
+		var err error
+		rep, err = prepareStandby(ctx, *replica, dir, defaultStandbyMaxAge)
 		if err != nil {
 			cancel()
 			t.Fatal(err)
 		}
-		go rep.run(ctx)
+		load = core.LoadStandbyState
 	}
-	state, err := core.LoadState(dir)
+	state, err := load(dir)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -39,6 +45,7 @@ func runTestController(t *testing.T, dir, addr string, replica *core.ReplicaCred
 	tlsCfg, err := relay.TLSConfig(state)
 	if replica != nil {
 		handler.SetStandby()
+		rep.setStale = handler.SetStale
 		tlsCfg, err = relay.TLSConfigWithServer(state, replica.ServerCert, replica.ServerKey)
 	}
 	if err != nil {
@@ -50,10 +57,13 @@ func runTestController(t *testing.T, dir, addr string, replica *core.ReplicaCred
 		cancel()
 		t.Fatal(err)
 	}
+	if rep != nil {
+		go rep.run(ctx)
+	}
 	done := make(chan error, 1)
 	go func() {
 		done <- serveController(ctx, newControllerServer(handler, tlsCfg, defaultServerTimeouts), ln, handler, func(ctx context.Context) {
-			handler.Watch(ctx.Done(), state, func() (*core.State, error) { return core.LoadState(dir) }, 50*time.Millisecond)
+			handler.Watch(ctx.Done(), state, func() (*core.State, error) { return load(dir) }, 50*time.Millisecond)
 		}, time.Second)
 	}()
 	stopped := false
@@ -170,4 +180,90 @@ func freeLocal(t *testing.T) string {
 
 func errorsIsRefused(err error) bool {
 	return err != nil && strings.Contains(err.Error(), agent.ErrRefused.Error())
+}
+
+func TestStandbyStopsServingStaleState(t *testing.T) {
+	primaryDir := filepath.Join(t.TempDir(), "primary")
+	if err := core.InitState(primaryDir, "localhost:8443", "10.77.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	primaryAddr := freeLocal(t)
+	_, primaryPort, _ := net.SplitHostPort(primaryAddr)
+	replicaPath := filepath.Join(t.TempDir(), "standby.json")
+	if err := Run([]string{"replica-add", "-data", primaryDir, "-id", "standby", "-address", "standby.example.com:8443", "-out", replicaPath}); err != nil {
+		t.Fatal(err)
+	}
+	replica, err := readReplicaCredential(replicaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica.Primary = "localhost:" + primaryPort
+	standbyDir := filepath.Join(t.TempDir(), "standby")
+	ctx := context.Background()
+
+	// No stored state and no primary: the standby cannot start.
+	if _, err := prepareStandby(ctx, replica, standbyDir, time.Hour); err == nil {
+		t.Fatal("standby started without any state")
+	}
+	stopPrimary := runTestController(t, primaryDir, primaryAddr, nil)
+	rep, err := prepareStandby(ctx, replica, standbyDir, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stale []bool
+	rep.setStale = func(v bool) { stale = append(stale, v) }
+
+	// Network errors are tolerated up to the maximum age.
+	now := time.Now()
+	rep.failed(unreachable{net.ErrClosed}, now.Add(30*time.Minute))
+	if len(stale) != 0 {
+		t.Fatalf("stale after 30 minutes: %v", stale)
+	}
+	rep.failed(unreachable{net.ErrClosed}, now.Add(61*time.Minute))
+	if len(stale) != 1 || !stale[0] {
+		t.Fatalf("not stale after the maximum age: %v", stale)
+	}
+	if _, err := rep.pull(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 2 || stale[1] {
+		t.Fatalf("successful replication did not resume serving: %v", stale)
+	}
+
+	// A removed standby stops at once and does not start from its old state.
+	if err := Run([]string{"replica-remove", "-data", primaryDir, "-id", "standby"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := rep.pull(ctx)
+		var answer primaryAnswer
+		if errors.As(err, &answer) && answer.status == http.StatusForbidden {
+			rep.failed(err, time.Now())
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("primary did not refuse the removed standby: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(stale) != 3 || !stale[2] {
+		t.Fatalf("removed standby keeps serving: %v", stale)
+	}
+	if _, err := prepareStandby(ctx, replica, standbyDir, time.Hour); err == nil {
+		t.Fatal("removed standby started from its stored state")
+	}
+
+	// With the primary down, a recent stored state is used, an old one not.
+	stopPrimary()
+	if _, err := prepareStandby(ctx, replica, standbyDir, time.Hour); err != nil {
+		t.Fatalf("standby did not start from a recent state: %v", err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(filepath.Join(standbyDir, "state.json"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareStandby(ctx, replica, standbyDir, time.Hour); err == nil {
+		t.Fatal("standby started from a state older than the maximum age")
+	}
 }
