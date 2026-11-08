@@ -21,6 +21,7 @@ Wants=network-online.target
 Type=simple
 User=kinfold
 Group=kinfold
+# Add -max-conns-per-ip N if more than four devices share one public address.
 ExecStart=/usr/local/bin/kinfold serve -data /var/lib/kinfold-controller/state -listen :8443
 Restart=on-failure
 RestartSec=2s
