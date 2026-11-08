@@ -45,6 +45,7 @@ Commands:
   status       Show the authorized network configuration
   check-config Compare the on-disk and loaded controller configuration
   run          Run the Linux TUN client
+  renew        Renew this device's certificate if it is due
   version      Show build information
 
 Run a command with -h for its options.
@@ -645,6 +646,7 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
+		handler.SetRenewer(controllerRenewer(*dir, time.Now))
 		server := newControllerServer(handler, tlsCfg, defaultServerTimeouts)
 		for _, warning := range s.CertificateWarnings(time.Now(), 30*24*time.Hour) {
 			slog.Warn(warning)
@@ -657,6 +659,7 @@ func Run(args []string) error {
 		f := flags(args[0])
 		path := f.String("credential", "", "private peer credential file")
 		iface := f.String("interface", "kf0", "new Linux TUN interface name")
+		autoRenew := f.Bool("auto-renew", true, "renew the device certificate automatically before it expires (run only)")
 		logging := addLogFlags(f)
 		if err := f.Parse(args[1:]); err != nil {
 			return err
@@ -713,7 +716,48 @@ func Run(args []string) error {
 			return nil
 		}
 		slog.Info("client starting", "peer", id, "build", readBuildInfo().short())
-		return runSupervised(ctx, cred, cfg, id, *iface)
+		return runSupervised(ctx, *path, cred, cfg, id, *iface, *autoRenew)
+	case "renew":
+		f := flags("renew")
+		path := f.String("credential", "", "private peer credential file to renew in place")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		if *path == "" {
+			return fmt.Errorf("-credential is required")
+		}
+		if err := core.CheckPrivate(*path); err != nil {
+			return err
+		}
+		var cred core.Credential
+		if err := core.ReadJSON(*path, &cred); err != nil {
+			return err
+		}
+		cert, err := credentialCertificate(cred)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		client := agent.NewConfigClient(cred)
+		defer client.Close()
+		renewed, ok, err := renewCredential(ctx, *path, cred, client, time.Now())
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Printf("Certificate valid until %s; renewal is not due yet.\n", cert.NotAfter.UTC().Format(time.DateOnly))
+			return nil
+		}
+		next, err := credentialCertificate(renewed)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Renewed certificate in %s, valid until %s. Restart a running client to use it.\n", *path, next.NotAfter.UTC().Format(time.DateOnly))
+		return nil
 	case "version":
 		f := flags("version")
 		if err := f.Parse(args[1:]); err != nil {
