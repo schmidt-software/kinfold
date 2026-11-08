@@ -1,6 +1,7 @@
 # Kinfold client; one instance per device credential.
 #
-# Install (instance name "alice" as an example):
+# Install (instance name "alice" as an example; at most 12 characters,
+# because the interface is named kf-<instance> and Linux allows 15):
 #   install -m 0755 kinfold /usr/local/bin/kinfold
 #   install -m 0644 kinfold-client@.service /etc/systemd/system/
 #   systemctl daemon-reload
