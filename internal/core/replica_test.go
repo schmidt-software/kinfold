@@ -1,9 +1,13 @@
 package core
 
 import (
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestReplicaLifecycle(t *testing.T) {
@@ -100,5 +104,58 @@ func TestReplicaPromotion(t *testing.T) {
 	}
 	if err := s.Promote(cred); err == nil {
 		t.Fatal("promoted twice")
+	}
+}
+
+func TestStandbyToleratesExpiredPrimaryCertificate(t *testing.T) {
+	s, err := NewState("primary.example.com:8443", "10.77.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred, err := s.AddReplica("standby", "standby.example.com:8443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPair, err := tls.X509KeyPair(s.CA, s.CAKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, _ := x509.ParseCertificate(caPair.Certificate[0])
+	pub, priv, _ := newKey()
+	n, _ := serial()
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: n, Subject: pkix.Name{CommonName: "primary.example.com"}, DNSNames: []string{"primary.example.com"},
+		NotBefore: ca.NotBefore, NotAfter: time.Now().Add(-time.Second),
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}, ca, pub, caPair.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ServerCert = certPEM(der)
+	if s.ServerKey, err = keyPEM(priv); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Check(); err == nil {
+		t.Fatal("expired server certificate accepted for serving as primary")
+	}
+	if err := s.CheckStandby(); err != nil {
+		t.Fatalf("standby rejects a state whose primary certificate expired: %v", err)
+	}
+	warnings := strings.Join(s.CertificateWarnings(time.Now(), 30*24*time.Hour), "\n")
+	if !strings.Contains(warnings, "controller certificate expired") {
+		t.Fatalf("warnings %q", warnings)
+	}
+	if strings.Contains(warnings, "standby standby") {
+		t.Fatalf("fresh standby certificate reported: %q", warnings)
+	}
+	late := time.Now().AddDate(1, 0, 1)
+	if w := strings.Join(s.CertificateWarnings(late, 0), "\n"); !strings.Contains(w, "standby standby certificate expired") {
+		t.Fatalf("expired standby certificate not reported: %q", w)
+	}
+	if w := cred.CertificateWarnings(late, 0); len(w) != 2 {
+		t.Fatalf("credential warnings %q", w)
+	}
+	if w := cred.CertificateWarnings(time.Now(), 24*time.Hour); len(w) != 0 {
+		t.Fatalf("fresh credential reported: %q", w)
 	}
 }

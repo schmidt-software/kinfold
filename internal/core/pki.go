@@ -243,9 +243,17 @@ func LoadStateForOfflineMaintenance(dir string) (*State, error) {
 	return loadState(dir, true)
 }
 
-// Check validates a complete state as LoadState does, e.g. one received by
-// a standby controller before it is stored (D-028).
+// Check validates a complete state as LoadState does.
 func (s *State) Check() error { return s.check(false) }
+
+// CheckStandby validates a state received by a standby controller before it
+// is stored (D-028). The primary's server certificate is checked for
+// signature and name but not for expiry: the standby presents its own
+// certificate and must keep serving while the primary is down (D-031).
+func (s *State) CheckStandby() error { return s.check(true) }
+
+// LoadStandbyState loads a standby's replicated state (see CheckStandby).
+func LoadStandbyState(dir string) (*State, error) { return loadState(dir, true) }
 
 func (s *State) check(renewServer bool) error {
 	if err := s.Config.Validate(); err != nil {
@@ -386,11 +394,8 @@ func checkPeerCertificate(id string, cert *x509.Certificate) error {
 func (s *State) CertificateWarnings(now time.Time, window time.Duration) []string {
 	var warnings []string
 	check := func(name string, cert *x509.Certificate) {
-		switch {
-		case !now.Before(cert.NotAfter):
-			warnings = append(warnings, fmt.Sprintf("%s certificate expired on %s", name, cert.NotAfter.UTC().Format(time.DateOnly)))
-		case cert.NotAfter.Sub(now) < window:
-			warnings = append(warnings, fmt.Sprintf("%s certificate expires on %s", name, cert.NotAfter.UTC().Format(time.DateOnly)))
+		if w := expiryWarning(name, cert, now, window); w != "" {
+			warnings = append(warnings, w)
 		}
 	}
 	if block, _ := pem.Decode(s.CA); block != nil {
@@ -408,7 +413,22 @@ func (s *State) CertificateWarnings(now time.Time, window time.Duration) []strin
 			check("device "+peer.ID, cert)
 		}
 	}
+	for _, r := range s.Replicas {
+		if cert, err := ParseCert(r.Cert); err == nil {
+			check("standby "+r.ID, cert)
+		}
+	}
 	return warnings
+}
+
+func expiryWarning(name string, cert *x509.Certificate, now time.Time, window time.Duration) string {
+	switch {
+	case !now.Before(cert.NotAfter):
+		return fmt.Sprintf("%s certificate expired on %s", name, cert.NotAfter.UTC().Format(time.DateOnly))
+	case cert.NotAfter.Sub(now) < window:
+		return fmt.Sprintf("%s certificate expires on %s", name, cert.NotAfter.UTC().Format(time.DateOnly))
+	}
+	return ""
 }
 
 // RenewServerCertificate creates a new controller key and certificate using the existing CA.
