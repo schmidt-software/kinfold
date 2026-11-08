@@ -642,6 +642,7 @@ func Run(args []string) error {
 		maxPerIP := f.Int("max-conns-per-ip", relay.DefaultListenerLimits.PerSource, "maximum concurrent TCP connections per source IP (0 disables)")
 		ratePerIP := f.Float64("conn-rate-per-ip", relay.DefaultListenerLimits.RatePerSource, "new TCP connections per second per source IP (0 disables)")
 		standbyCred := f.String("standby", "", "run as read-only standby replicating from the primary named in this replica credential")
+		standbyMaxAge := f.Duration("standby-max-age", defaultStandbyMaxAge, "standby: stop serving devices when the state could not be replicated for this long")
 		logging := addLogFlags(f)
 		if err := f.Parse(args[1:]); err != nil {
 			return err
@@ -662,11 +663,21 @@ func Run(args []string) error {
 				return err
 			}
 			replica = &cred
-			if rep, err = prepareStandby(ctx, cred, *dir); err != nil {
+			if *standbyMaxAge <= 0 {
+				return fmt.Errorf("-standby-max-age must be positive")
+			}
+			for _, warning := range cred.CertificateWarnings(time.Now(), 30*24*time.Hour) {
+				slog.Warn(warning + "; renew with replica-remove and replica-add on the primary")
+			}
+			if rep, err = prepareStandby(ctx, cred, *dir, *standbyMaxAge); err != nil {
 				return err
 			}
 		}
-		s, err := core.LoadState(*dir)
+		loadServed := core.LoadState
+		if replica != nil {
+			loadServed = core.LoadStandbyState
+		}
+		s, err := loadServed(*dir)
 		if err != nil {
 			return err
 		}
@@ -687,6 +698,10 @@ func Run(args []string) error {
 		tlsCfg, err := relay.TLSConfig(s)
 		if replica != nil {
 			handler.SetStandby()
+			rep.setStale = handler.SetStale
+			handler.Metrics().GaugeFunc("kinfold_standby_last_replication_timestamp_seconds", "Unix time of the last successful replication from the primary.", nil, func() float64 {
+				return float64(rep.lastReplication().Unix())
+			})
 			tlsCfg, err = relay.TLSConfigWithServer(s, replica.ServerCert, replica.ServerKey)
 		}
 		if err != nil {
@@ -721,7 +736,7 @@ func Run(args []string) error {
 		slog.Info("controller listening", "address", ln.Addr().String(), "build", readBuildInfo().short(), "peers", len(s.Config.Peers))
 		return serveController(ctx, server, ln, handler, func(ctx context.Context) {
 			handler.Watch(ctx.Done(), s, func() (*core.State, error) {
-				next, err := core.LoadState(*dir)
+				next, err := loadServed(*dir)
 				if err == nil {
 					tokens.update(next)
 				}
