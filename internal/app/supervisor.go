@@ -96,6 +96,7 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 			done <- err
 		}()
 		slog.Info("tunnel active", "interface", iface, "peer", id, "addresses", addresses)
+		agent.Metrics.Counter("kinfold_tunnel_starts_total", "TUN device (re)creations.", nil).Inc()
 		return nil
 	}
 	if err := start(initial, initialID); err != nil {
@@ -145,7 +146,9 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 			if ctx.Err() != nil {
 				return stop()
 			}
+			reachable := agent.Metrics.Gauge("kinfold_controller_reachable", "1 while the last configuration fetch succeeded.", nil)
 			if err != nil {
+				reachable.Set(0)
 				now := time.Now()
 				if failingSince.IsZero() {
 					failingSince = now
@@ -159,6 +162,7 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 				}
 				continue
 			}
+			reachable.Set(1)
 			if !failingSince.IsZero() {
 				slog.Info("controller reachable again", "outage", time.Since(failingSince).Round(time.Second))
 				failingSince = time.Time{}
@@ -179,6 +183,7 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 				}
 				updates <- cfg
 				revision = next
+				agent.Metrics.Counter("kinfold_config_updates_applied_total", "Configuration changes applied to the running tunnel.", nil).Inc()
 				continue
 			}
 			if err := stop(); err != nil {
@@ -211,6 +216,10 @@ const fetchGrace = 30 * time.Second
 // the new credential.
 func runSupervised(ctx context.Context, path string, cred core.Credential, cfg core.Config, id, iface string, autoRenew bool) error {
 	for {
+		if cert, err := credentialCertificate(cred); err == nil {
+			expiry := float64(cert.NotAfter.Unix())
+			agent.Metrics.GaugeFunc("kinfold_certificate_expiry_timestamp_seconds", "Expiry of the device certificate in use (Unix time).", nil, func() float64 { return expiry })
+		}
 		client := agent.NewConfigClient(cred)
 		runCtx, cancel := context.WithCancel(ctx)
 		renewed := make(chan core.Credential, 1)

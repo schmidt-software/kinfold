@@ -17,6 +17,7 @@ import (
 
 	"github.com/schmidt-software/kinfold/internal/agent"
 	"github.com/schmidt-software/kinfold/internal/core"
+	"github.com/schmidt-software/kinfold/internal/metrics"
 	"github.com/schmidt-software/kinfold/internal/relay"
 )
 
@@ -624,6 +625,7 @@ func Run(args []string) error {
 		f := flags("serve")
 		dir := f.String("data", "controller-data", "controller data directory")
 		listen := f.String("listen", ":8443", "TCP listen address")
+		metricsAddr := f.String("metrics", "", "serve Prometheus metrics on this loopback host:port (disabled when empty)")
 		maxConns := f.Int("max-conns", relay.DefaultListenerLimits.Total, "maximum concurrent TCP connections")
 		maxPerIP := f.Int("max-conns-per-ip", relay.DefaultListenerLimits.PerSource, "maximum concurrent TCP connections per source IP (0 disables)")
 		ratePerIP := f.Float64("conn-rate-per-ip", relay.DefaultListenerLimits.RatePerSource, "new TCP connections per second per source IP (0 disables)")
@@ -654,7 +656,16 @@ func Run(args []string) error {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		limits := relay.ListenerLimits{Total: *maxConns, PerSource: *maxPerIP, RatePerSource: *ratePerIP, BurstPerSource: max(*maxPerIP, 1)}
+		rejected := handler.Metrics().Counter("kinfold_listener_rejected_total", "Connections closed by per-source limits.", nil)
+		limits := relay.ListenerLimits{Total: *maxConns, PerSource: *maxPerIP, RatePerSource: *ratePerIP, BurstPerSource: max(*maxPerIP, 1), OnReject: rejected.Inc}
+		handler.Metrics().GaugeFunc("kinfold_build_info", "Build information.", metrics.Labels{"version": Version}, func() float64 { return 1 })
+		if *metricsAddr != "" {
+			addr, err := metrics.Serve(*metricsAddr, handler.Metrics(), ctx.Done())
+			if err != nil {
+				return err
+			}
+			slog.Info("metrics listening", "address", addr.String())
+		}
 		ln, err := listenController(ctx, *listen, limits)
 		if err != nil {
 			return err
@@ -672,6 +683,7 @@ func Run(args []string) error {
 		f := flags(args[0])
 		path := f.String("credential", "", "private peer credential file")
 		iface := f.String("interface", "kf0", "new Linux TUN interface name")
+		metricsAddr := f.String("metrics", "", "serve Prometheus metrics on this loopback host:port (run only; disabled when empty)")
 		autoRenew := f.Bool("auto-renew", true, "renew the device certificate automatically before it expires (run only)")
 		logging := addLogFlags(f)
 		if err := f.Parse(args[1:]); err != nil {
@@ -735,6 +747,14 @@ func Run(args []string) error {
 			return nil
 		}
 		slog.Info("client starting", "peer", id, "build", readBuildInfo().short())
+		if *metricsAddr != "" {
+			agent.Metrics.GaugeFunc("kinfold_build_info", "Build information.", metrics.Labels{"version": Version}, func() float64 { return 1 })
+			addr, err := metrics.Serve(*metricsAddr, agent.Metrics, ctx.Done())
+			if err != nil {
+				return err
+			}
+			slog.Info("metrics listening", "address", addr.String())
+		}
 		return runSupervised(ctx, *path, cred, cfg, id, *iface, *autoRenew)
 	case "renew":
 		f := flags("renew")
