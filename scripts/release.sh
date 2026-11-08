@@ -27,6 +27,8 @@ require_clean() {
   fi
 }
 require_clean
+# Every release ships its notes and user guides (D-038).
+sh scripts/release-docs.sh check "$version"
 
 rm -rf "$out"
 mkdir -p "$out"
@@ -44,6 +46,8 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   echo "built $out/$name"
 done
 cp packaging/systemd/*.service packaging/launchd/*.plist "$out/"
+cp "docs/user-guide/en/$version.md" "$out/kinfold-$version-user-guide-en.md"
+cp "docs/user-guide/de/$version.md" "$out/kinfold-$version-user-guide-de.md"
 (
   cd "$out"
   if command -v sha256sum >/dev/null 2>&1; then
