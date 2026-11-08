@@ -656,3 +656,26 @@ app-store packaging and stay deferred (#64).
 automated test of the tunnel in CI; the smoke test must be run by hand
 before releases that touch the TUN code. Behaviour above the TUN device is
 identical to Linux.
+
+## D-030 — 2026-11-08 — active — Explicit standby promotion
+
+**Decision:** `replica-promote -data <dir> -standby <credential>` turns a
+stopped standby's replicated state into a primary state: it checks that the
+credential belongs to the state's CA and to a registered replica, sets the
+controller address to the standby's address, issues a new server
+certificate for it from the replicated CA and removes the standby's replica
+entry, all under the state lock. The state is loaded like for offline
+maintenance, because the old primary's server certificate may have expired.
+`ChangeServerAddress` refuses a standby's address and validates the result
+before it is written.
+
+**Rationale:** Pre-release review of v0.5 (findings 1, 2): restarting a
+standby without `-standby`, as D-028 documented, served the old primary's
+address and certificate, so devices failed hostname verification, and
+moving the primary onto a standby's address produced a state that no longer
+loaded. Issuing a fresh certificate instead of reusing the standby's keeps
+promotion working when the standby's own certificate is close to expiry.
+
+**Consequences:** Promotion stays manual and requires stopping the standby
+briefly. Other standbys must be re-created after a promotion because their
+credentials name the old primary.

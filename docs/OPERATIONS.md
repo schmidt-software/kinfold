@@ -93,10 +93,19 @@ the standby host (see the README). Operational rules:
   its state with the primary's every two seconds.
 - Monitor the standby's log for `replication from the primary failed`.
 - **Promotion** (primary lost): make sure the old primary cannot come back
-  (power off, block its address), then restart the standby without
-  `-standby`. Devices keep using it; renewals and enrollment work again.
-  When the old host returns, set it up as a new standby with `replica-add`
-  on the new primary.
+  (power off, block its address), stop the standby and run
+  `kinfold replica-promote -data /var/lib/kinfold-controller/state -standby standby.json`
+  on it. This sets the controller address in the state to the standby's own
+  address, issues a server certificate for it and removes the standby's
+  replica entry. Start it without `-standby`. Devices keep using it (it is
+  already in their controller list); renewals and enrollment work again.
+  Credentials of other standbys still name the old primary: remove and
+  re-add them with `replica-remove` / `replica-add` on the new primary. When
+  the old host returns, set it up as a new standby the same way. Starting a
+  standby's state without promoting it makes it present the old primary's
+  certificate, which devices reject.
+- Never move the primary (`renew-server -server`) to an address held by a
+  standby; the command refuses it.
 - **Removing a standby**: `replica-remove -id standby` on the primary stops
   its replication; destroy its data directory and credential, they contain
   the CA key.

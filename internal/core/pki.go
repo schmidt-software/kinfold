@@ -435,10 +435,19 @@ func (s *State) ChangeServerAddress(address string) error {
 			return fmt.Errorf("new controller host name %q equals the ID of a device", host)
 		}
 	}
-	old := s.Server
+	for _, r := range s.Replicas {
+		if r.Address == address {
+			return fmt.Errorf("address %s belongs to standby %s", address, r.ID)
+		}
+	}
+	old, oldCert, oldKey := s.Server, s.ServerCert, s.ServerKey
 	s.Server = address
-	if err := s.issueServerCertificate(); err != nil {
-		s.Server = old
+	err := s.issueServerCertificate()
+	if err == nil {
+		err = s.validatePKI(false)
+	}
+	if err != nil {
+		s.Server, s.ServerCert, s.ServerKey = old, oldCert, oldKey
 		return err
 	}
 	return nil

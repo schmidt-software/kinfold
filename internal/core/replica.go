@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -119,6 +120,43 @@ func (s *State) RemoveReplica(id string) bool {
 		}
 	}
 	return false
+}
+
+// Promote turns a standby's replicated state into a primary state (D-028):
+// the controller address becomes the standby's own with a newly issued
+// server certificate for it, and its replica entry is removed. Other replicas stay registered, but
+// their credentials still name the old primary and must be re-created.
+func (s *State) Promote(cred ReplicaCredential) error {
+	if !bytes.Equal(s.CA, cred.CA) {
+		return fmt.Errorf("replica credential belongs to another CA")
+	}
+	pair, err := tls.X509KeyPair(cred.Cert, cred.Key)
+	if err != nil {
+		return fmt.Errorf("replica certificate: %w", err)
+	}
+	index := -1
+	for i, r := range s.Replicas {
+		if r.Address == cred.Address && bytes.Equal(r.Cert, pair.Certificate[0]) {
+			index = i
+		}
+	}
+	if index < 0 {
+		return fmt.Errorf("the state does not list this standby as replica at %s", cred.Address)
+	}
+	next := *s
+	next.Server = cred.Address
+	if err := next.issueServerCertificate(); err != nil {
+		return err
+	}
+	next.Replicas = append(append([]Replica(nil), s.Replicas[:index]...), s.Replicas[index+1:]...)
+	if len(next.Replicas) == 0 {
+		next.Replicas = nil
+	}
+	if err := next.Check(); err != nil {
+		return fmt.Errorf("promoted state is invalid: %w", err)
+	}
+	*s = next
+	return nil
 }
 
 // Controllers lists the addresses devices may fetch their configuration

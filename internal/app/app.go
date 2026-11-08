@@ -55,6 +55,7 @@ Commands:
   seen-reset   Reset the configuration rollback watermark of a credential
   replica-add  Register a standby controller and write its credential
   replica-remove Remove a standby controller
+  replica-promote Turn a stopped standby into the primary
   renew        Renew this device's certificate if it is due
   version      Show build information
 
@@ -1059,6 +1060,43 @@ func Run(args []string) error {
 			return err
 		}
 		fmt.Printf("Removed standby %s; it can no longer replicate. Its copy of the state still contains the CA key: destroy it.\n", *id)
+		return nil
+	case "replica-promote":
+		f := flags("replica-promote")
+		dir := f.String("data", "controller-data", "standby data directory")
+		credPath := f.String("standby", "", "replica credential of this standby")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		if *credPath == "" {
+			return fmt.Errorf("-standby is required")
+		}
+		cred, err := readReplicaCredential(*credPath)
+		if err != nil {
+			return err
+		}
+		lock, err := core.LockState(*dir)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		// The replicated state carries the old primary's server certificate,
+		// which may have expired while the primary was down.
+		s, err := core.LoadStateForOfflineMaintenance(*dir)
+		if err != nil {
+			return err
+		}
+		old := s.Server
+		if err := s.Promote(cred); err != nil {
+			return err
+		}
+		if err := core.WriteJSON(filepath.Join(*dir, "state.json"), s); err != nil {
+			return err
+		}
+		fmt.Printf("This controller is now the primary at %s (was %s). Start it without -standby. Make sure %s cannot come back as primary; re-create other standbys with replica-add here.\n", s.Server, old, old)
 		return nil
 	case "version":
 		f := flags("version")
