@@ -529,3 +529,29 @@ token to exactly the device it was meant for.
 which costs the controller more per connection than before; the listener
 limits (D-011) bound that cost. A leaked unused token lets its holder enroll
 as that device until it expires or is revoked.
+
+## D-025 — 2026-11-08 — active — Signed configuration with leases
+
+**Decision:** The controller holds a second Ed25519 key (`config_key` in the
+state, generated on first start for older states) and signs every
+configuration view it serves: device ID, issue time, lease end (2 minutes)
+and the view. Devices pin the public key in their credential (new
+credentials carry it; older ones fetch it once over the authenticated
+connection and store it when the file is writable), verify every
+configuration, refuse one issued before the newest they accepted (persisted
+as `<credential>.seen`), refuse issue times more than 5 minutes in the
+future, and close the tunnel when the lease of the last accepted
+configuration ends.
+
+**Rationale:** Issue #22 and the security model's production contract:
+configuration must be bound to issuer, device and validity, and a device
+must stop acting on authorization it can no longer confirm. This is the
+prerequisite for the direct path (#21), where traffic no longer passes the
+relay that enforced revocation so far (D-013). A separate key keeps the
+option to move signing off the TLS-serving process later.
+
+**Limits:** No quorum and no key rotation yet; the controller's own state
+has no rollback protection; the lease depends on device clocks (forward
+jumps fail closed, backward jumps extend at most to the issue-time check).
+Pinning the key from the authenticated connection for pre-v0.4 credentials
+trusts the controller exactly as before, once.
