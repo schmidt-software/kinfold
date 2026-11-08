@@ -83,6 +83,10 @@ if ! docker exec "$controller" wget -qO- http://127.0.0.1:9100/metrics 2>/dev/nu
   docker exec "$controller" wget -qO- http://127.0.0.1:9100/metrics >&2 || true
   exit 1
 fi
+if ! docker exec "$controller" wget -qO- http://127.0.0.1:9100/metrics 2>/dev/null | grep -q '^kinfold_device_last_seen_timestamp_seconds{peer="alice"} [1-9]'; then
+  echo "Device status metric missing for alice" >&2
+  exit 1
+fi
 echo "Controller metrics on loopback: OK"
 # Alice learns Bob's signed direct endpoint with a configuration fetch and
 # upgrades from the relay within a few seconds.
