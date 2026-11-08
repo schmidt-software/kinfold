@@ -135,8 +135,7 @@ func TestOfflineAuthorizationDropsPendingToken(t *testing.T) {
 }
 
 func TestUnknownTokenIsRefusedWithoutTouchingState(t *testing.T) {
-	cache := &tokenCache{}
-	cache.update(&core.State{})
+	cache := newTokenCache("/nonexistent/state", &core.State{})
 	enroll := controllerEnroller("/nonexistent/state", time.Now, cache)
 	if _, _, err := enroll("guess", nil); err != core.ErrTokenInvalid {
 		t.Fatalf("unknown token: %v (the state must not be loaded or locked)", err)

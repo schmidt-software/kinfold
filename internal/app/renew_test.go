@@ -36,7 +36,7 @@ func renewalController(t *testing.T, now func() time.Time) (dir, credPath string
 		t.Fatal(err)
 	}
 	handler.SetRenewer(controllerRenewer(dir, now))
-	tokens := newTokenCache(state)
+	tokens := newTokenCache(dir, state)
 	handler.SetEnroller(controllerEnroller(dir, now, tokens))
 	tlsCfg, err := relay.TLSConfig(state)
 	if err != nil {
