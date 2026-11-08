@@ -53,7 +53,7 @@ network_id=$(docker network create "$network")
 controller_id=$(docker run -d --name "$controller" --network "$network" --network-alias controller \
   --mount "type=bind,src=$work/kinfold,dst=/kinfold,readonly" \
   --mount "type=bind,src=$work/state,dst=/state,readonly" \
-  --entrypoint /kinfold "$image" serve -data /state -listen :8443 -metrics 127.0.0.1:9100)
+  --entrypoint /kinfold "$image" serve -data /state -listen :8443 -metrics 127.0.0.1:9100 -relay-rate 50M)
 for peer in alice bob charlie; do
   case "$peer" in alice) name=$alice ;; bob) name=$bob ;; charlie) name=$charlie ;; esac
   id=$(docker run -d --name "$name" --network "$network" --cap-add NET_ADMIN --device /dev/net/tun \
