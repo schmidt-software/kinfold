@@ -53,7 +53,7 @@ network_id=$(docker network create "$network")
 controller_id=$(docker run -d --name "$controller" --network "$network" --network-alias controller \
   --mount "type=bind,src=$work/kinfold,dst=/kinfold,readonly" \
   --mount "type=bind,src=$work/state,dst=/state,readonly" \
-  --entrypoint /kinfold "$image" serve -data /state -listen :8443)
+  --entrypoint /kinfold "$image" serve -data /state -listen :8443 -metrics 127.0.0.1:9100)
 for peer in alice bob charlie; do
   case "$peer" in alice) name=$alice ;; bob) name=$bob ;; charlie) name=$charlie ;; esac
   id=$(docker run -d --name "$name" --network "$network" --cap-add NET_ADMIN --device /dev/net/tun \
@@ -78,6 +78,12 @@ if [ "$success" != true ]; then
 fi
 docker exec "$bob" ping -c 1 -W 2 10.77.0.1 >/dev/null
 echo "Bidirectional ICMP over real Linux TUN and relay: OK"
+if ! docker exec "$controller" wget -qO- http://127.0.0.1:9100/metrics 2>/dev/null | grep -q '^kinfold_relay_pairings_total [1-9]'; then
+  echo "Controller metrics missing or no relay pairing counted" >&2
+  docker exec "$controller" wget -qO- http://127.0.0.1:9100/metrics >&2 || true
+  exit 1
+fi
+echo "Controller metrics on loopback: OK"
 
 if docker exec "$alice" ping -c 2 -W 1 10.77.0.3 >/dev/null 2>&1 ||
    docker exec "$charlie" ping -c 2 -W 1 10.77.0.1 >/dev/null 2>&1; then
