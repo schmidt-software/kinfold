@@ -52,6 +52,7 @@ const defaultPairingTimeout = 30 * time.Second
 type Server struct {
 	metrics        *metrics.Registry
 	renew          Renewer
+	enroll         Enroller
 	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
 	renewInterval  time.Duration
 	pairingTimeout time.Duration
@@ -361,6 +362,11 @@ func (s *Server) Watch(done <-chan struct{}, initial *core.State, load func() (*
 	}
 }
 
+// TLSConfig is the controller's TLS configuration. The CA certificate is
+// sent with the server certificate so a device enrolling with a token can
+// verify the controller against a pinned CA fingerprint before it reveals
+// the token. Client certificates are verified when given; every endpoint
+// except POST /enroll requires one (D-024).
 func TLSConfig(s *core.State) (*tls.Config, error) {
 	cert, err := tls.X509KeyPair(s.ServerCert, s.ServerKey)
 	if err != nil {
@@ -370,11 +376,70 @@ func TLSConfig(s *core.State) (*tls.Config, error) {
 	if !roots.AppendCertsFromPEM(s.CA) {
 		return nil, fmt.Errorf("invalid CA")
 	}
+	caPair, err := tls.X509KeyPair(s.CA, s.CAKey)
+	if err != nil {
+		return nil, err
+	}
+	cert.Certificate = append(cert.Certificate, caPair.Certificate[0])
 	return &tls.Config{
 		MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert},
-		ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots,
+		ClientAuth: tls.VerifyClientCertIfGiven, ClientCAs: roots,
 		NextProtos: []string{"http/1.1"},
 	}, nil
+}
+
+// Enroller consumes an enrollment token for a certificate request and
+// returns the new device's ID and certificate. It does its own locking.
+type Enroller func(token string, request []byte) (string, []byte, error)
+
+// SetEnroller enables POST /enroll. It must be called before serving.
+func (s *Server) SetEnroller(e Enroller) { s.enroll = e }
+
+type enrollRequest struct {
+	Token   string `json:"token"`
+	Request []byte `json:"request"`
+}
+
+func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
+	if s.enroll == nil {
+		s.reject(w, "not found", http.StatusNotFound)
+		return
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	source := "enroll:" + host
+	if s.renewalBlocked(source) {
+		w.Header().Set("Retry-After", "30")
+		s.reject(w, "enrollment recently failed; retry later", http.StatusTooManyRequests)
+		return
+	}
+	var req enrollRequest
+	if err := core.DecodeJSON(http.MaxBytesReader(w, r.Body, maxRenewalRequestBytes), &req); err != nil {
+		s.noteRenewalFailure(source)
+		s.reject(w, "invalid enrollment request", http.StatusBadRequest)
+		return
+	}
+	id, cert, err := s.enroll(req.Token, req.Request)
+	switch {
+	case errors.Is(err, ErrBusy):
+		w.Header().Set("Retry-After", "5")
+		s.reject(w, "controller busy; retry later", http.StatusServiceUnavailable)
+		return
+	case errors.Is(err, core.ErrTokenInvalid):
+		s.noteRenewalFailure(source)
+		slog.Warn("enrollment with an invalid token", "source", host)
+		s.reject(w, err.Error(), http.StatusForbidden)
+		return
+	case err != nil:
+		s.noteRenewalFailure(source)
+		slog.Warn("enrollment rejected", "source", host, "error", err)
+		s.reject(w, "enrollment rejected: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	slog.Info("device enrolled with token", "peer", id, "source", host)
+	s.count("kinfold_enrollments_total", "Devices enrolled with a token.", nil)
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Connection", "close")
+	_, _ = w.Write(cert)
 }
 
 func identity(r *http.Request, members map[string]string) (string, bool) {
@@ -391,6 +456,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	if !available {
 		s.reject(w, "configuration unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/enroll" && (r.TLS == nil || len(r.TLS.PeerCertificates) == 0) {
+		s.handleEnroll(w, r)
 		return
 	}
 	id, ok := identity(r, members)
