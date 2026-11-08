@@ -605,3 +605,31 @@ keeping the bound on how long a configuration is used.
 watermark can be used for at most the lease duration plus the clock
 tolerance. Controller clock regressions across restarts still lock devices
 out until fixed or reset; this is documented in the operator guide.
+
+## D-028 — 2026-11-08 — active — Active/standby controllers
+
+**Decision:** `replica-add` registers a standby controller (ID, address,
+CA-signed client-only certificate) and writes a replica credential with
+that client certificate and a server certificate for the standby's address.
+`serve -standby` pulls the full state from `GET /replica/state` every two
+seconds, checks it like `LoadState` (`State.Check`), stores it and serves
+signed configuration and the relay under its own certificate; renewal,
+enrollment and further replication are refused with a marked 503 (devices
+keep their grace period). Signed configurations list the controller
+addresses; devices remember them (`<credential>.controllers`), fail over to
+the next controller on network errors, use the controller that answered
+for relay connections and retry the primary every minute. Promotion is a
+manual restart without `-standby`.
+
+**Rationale:** Issue #26 within the D-021 scope: removes the controller as
+a single point of failure for data-plane availability without implementing
+consensus. Replicating the complete state (including keys) keeps the standby
+able to sign configurations and keeps a promotion a restart, at the cost of
+a second host with the same trust as the primary.
+
+**Consequences:** No quorum, manual promotion, up to two seconds of
+replication lag, and clocks of all controllers must be synchronised because
+devices accept only strictly newer configurations. Devices on different
+controllers can only use the direct path between them. The standby has no
+systemd unit of its own; the controller unit with an added `-standby` flag
+is used.
