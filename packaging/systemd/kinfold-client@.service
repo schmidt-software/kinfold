@@ -1,0 +1,65 @@
+# Kinfold client; one instance per device credential.
+#
+# Install (instance name "alice" as an example):
+#   install -m 0755 kinfold /usr/local/bin/kinfold
+#   install -m 0644 kinfold-client@.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   install -d -m 0700 /var/lib/kinfold-client/alice
+#   install -m 0600 alice.json /var/lib/kinfold-client/alice/credential.json
+#   systemctl enable --now kinfold-client@alice
+#
+# With DynamicUser, systemd moves the directory to
+# /var/lib/private/kinfold-client/alice and owns it for the service; it
+# stays reachable through the /var/lib/kinfold-client/alice symlink. The
+# directory must stay writable for automatic certificate renewal.
+
+[Unit]
+Description=Kinfold client (%i)
+Documentation=https://github.com/schmidt-software/kinfold
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+ExecStart=/usr/local/bin/kinfold run -credential /var/lib/kinfold-client/%i/credential.json -interface kf-%i
+Restart=on-failure
+RestartSec=5s
+
+StateDirectory=kinfold-client/%i
+StateDirectoryMode=0700
+UMask=0077
+
+# Creating and configuring the TUN interface (including the ip helper,
+# which inherits the ambient capability) needs CAP_NET_ADMIN and nothing else.
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=yes
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# Keeps /proc/sys read-only; disabling IPv6 duplicate address detection
+# then fails (logged at debug level) and new ULAs are usable after ~1 s.
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Fail blocked system calls with EPERM instead of killing the process.
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
