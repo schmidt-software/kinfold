@@ -67,4 +67,23 @@ func TestReplicaStateAndStandby(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("standby replicated further: %d", rec.Code)
 	}
+
+	config := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/config", nil)
+		r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{peerCert}}
+		rec := httptest.NewRecorder()
+		standby.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := config(); rec.Code != http.StatusOK {
+		t.Fatalf("standby config: %d", rec.Code)
+	}
+	standby.SetStale(true)
+	if rec := config(); rec.Code != http.StatusServiceUnavailable || rec.Header().Get("X-Kinfold-Standby") != "1" {
+		t.Fatalf("stale standby config: %d %q", rec.Code, rec.Header().Get("X-Kinfold-Standby"))
+	}
+	standby.SetStale(false)
+	if rec := config(); rec.Code != http.StatusOK {
+		t.Fatalf("standby config after recovery: %d", rec.Code)
+	}
 }
