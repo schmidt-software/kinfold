@@ -140,7 +140,17 @@ func (s *Server) SetStandby() { s.standby = true }
 // SetStale makes a standby refuse configuration and relay requests with a
 // marked 503 while its replicated state is too old or no longer authorized
 // (D-031); devices keep their grace period and try other controllers.
-func (s *Server) SetStale(stale bool) { s.stale.Store(stale) }
+// Sessions relayed before the standby went stale are closed as well.
+func (s *Server) SetStale(stale bool) {
+	if s.stale.Swap(stale) || !stale {
+		return
+	}
+	s.mu.Lock()
+	closed := s.invalidate()
+	s.mu.Unlock()
+	s.metrics.Counter("kinfold_relay_sessions_closed_total", "Relay endpoints closed by the controller, by reason.", metrics.Labels{"reason": "stale"}).Add(uint64(len(closed)))
+	forceClose(closed...)
+}
 
 // setState records the state behind the configuration: replicas, the
 // controller list for devices and the copy served to replicas.
