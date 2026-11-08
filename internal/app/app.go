@@ -656,7 +656,7 @@ func Run(args []string) error {
 		maxPerIP := f.Int("max-conns-per-ip", relay.DefaultListenerLimits.PerSource, "maximum concurrent TCP connections per source IP (0 disables)")
 		ratePerIP := f.Float64("conn-rate-per-ip", relay.DefaultListenerLimits.RatePerSource, "new TCP connections per second per source IP (0 disables)")
 		relayRate := f.String("relay-rate", "0", "per-device relay bandwidth limit in bytes per second, with optional k/M/G suffix (0 disables)")
-		relayBurst := f.String("relay-burst", "", "per-device relay burst in bytes, with optional k/M/G suffix (default: one second at -relay-rate)")
+		relayBurst := f.String("relay-burst", "", "per-device relay burst in bytes, with optional k/M/G suffix (default: one second at -relay-rate; at least 16 KiB)")
 		standbyCred := f.String("standby", "", "run as read-only standby replicating from the primary named in this replica credential")
 		standbyMaxAge := f.Duration("standby-max-age", defaultStandbyMaxAge, "standby: stop serving devices when the state could not be replicated for this long")
 		logging := addLogFlags(f)
@@ -672,6 +672,14 @@ func Run(args []string) error {
 		rate, err := parseBytes(*relayRate)
 		if err != nil {
 			return fmt.Errorf("-relay-rate: %w", err)
+		}
+		// Below one byte per second the pause computation overflows and
+		// would switch the limit off (v0.6 review finding 1).
+		if rate > 0 && rate < 1 {
+			return fmt.Errorf("-relay-rate must be 0 (off) or at least 1 byte per second")
+		}
+		if rate == 0 && *relayBurst != "" {
+			return fmt.Errorf("-relay-burst needs -relay-rate")
 		}
 		burst := rate
 		if *relayBurst != "" {
@@ -735,8 +743,8 @@ func Run(args []string) error {
 			return err
 		}
 		if rate > 0 {
-			handler.SetRelayLimit(relay.RelayLimit{Rate: rate, Burst: burst})
-			slog.Info("relay bandwidth limited per device", "bytes_per_second", rate, "burst", burst)
+			limit := handler.SetRelayLimit(relay.RelayLimit{Rate: rate, Burst: burst})
+			slog.Info("relay bandwidth limited per device", "bytes_per_second", limit.Rate, "burst", limit.Burst)
 		}
 		rejected := handler.Metrics().Counter("kinfold_listener_rejected_total", "Connections closed by per-source limits.", nil)
 		limits := relay.ListenerLimits{Total: *maxConns, PerSource: *maxPerIP, RatePerSource: *ratePerIP, BurstPerSource: max(*maxPerIP, 1), OnReject: rejected.Inc}
@@ -1219,10 +1227,11 @@ func parseBytes(v string) (float64, error) {
 		scale, v = 1e9, v[:len(v)-1]
 	}
 	n, err := strconv.ParseFloat(v, 64)
-	if err != nil || n < 0 || math.IsInf(n, 0) || math.IsNaN(n) {
+	n *= scale
+	if err != nil || n < 0 || math.IsInf(n, 0) || math.IsNaN(n) || n > 1e15 {
 		return 0, fmt.Errorf("invalid byte count %q", v)
 	}
-	return n * scale, nil
+	return n, nil
 }
 
 // checkNewOutput catches the common reasons writeNew would fail (existing

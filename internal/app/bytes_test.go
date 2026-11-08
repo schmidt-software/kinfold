@@ -8,9 +8,21 @@ func TestParseBytes(t *testing.T) {
 			t.Errorf("parseBytes(%q) = %v, %v; want %v", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"", "-1", "1T", "M", "Inf", "NaN", "1e400"} {
+	for _, in := range []string{"", "-1", "1T", "M", "Inf", "NaN", "1e400", "1e308G", "2e15"} {
 		if _, err := parseBytes(in); err == nil {
 			t.Errorf("parseBytes(%q) accepted", in)
+		}
+	}
+}
+
+func TestServeRejectsLimitValuesThatDisableIt(t *testing.T) {
+	for _, args := range [][]string{
+		{"serve", "-relay-rate", "0.5"},
+		{"serve", "-relay-burst", "1M"},
+		{"serve", "-relay-rate", "1e308G"},
+	} {
+		if err := Run(args); err == nil {
+			t.Errorf("%v accepted", args)
 		}
 	}
 }
