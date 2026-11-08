@@ -2,39 +2,37 @@
 
 # Kinfold
 
-An **experimental, self-hostable IPv4/IPv6 overlay network prototype**. It implements its own protocol and is not compatible with any other VPN or overlay product.
+A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux devices. A controller you run yourself admits devices explicitly, hands out fixed addresses and directional rules, and relays end-to-end encrypted sessions between them. Kinfold implements its own protocol and is not compatible with any other VPN or overlay product.
 
-> **Do not use for production or to protect confidential data.** There has been no independent security audit, there is no high availability, and important limitations in operation and revocation remain. In particular, the controller is a complete trust anchor.
+> **Status: alpha (`v0.2-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor and a single point of failure; all traffic passes through its relay. See [Known limits](#known-limits).
 
-## Current state
+## Features
 
-- One private IPv4 network and optionally one IPv6 ULA network with up to 32 explicitly authorized devices; one Linux TUN interface per device.
-- Self-hostable controller and TCP relay; no registration with an external service.
-- Controller and device identities are certificates; the controller connection uses mutual TLS 1.3.
-- An additional, mutually authenticated TLS 1.3 connection **between devices** runs through the relay. Certificates are checked against the member list delivered by the controller.
-- Established peer connections get an I/O deadline at the earliest expiry of the device, controller and CA certificates involved; data already buffered by TLS is not delivered to the packet parser after expiry either. The connection is then re-established. This local deadline is neither a tamper-proof clock nor a revocation guarantee.
-- IPv4 and optional IPv6 unicast packets only between the assigned device addresses; source and destination addresses are checked against spoofing. Automatic reconnection after connection loss.
-- The fixed tunnel MTU is 1280 bytes. Larger outgoing packets are dropped; an incoming frame above this limit terminates the affected peer session.
-- Reconnection attempts use exponential backoff with random jitter up to 30 seconds; after 30 seconds of stable connection the backoff is reset. A peer session ends when a single frame cannot be written within 10 seconds, and TCP keepalive detects a dead relay connection after about 30 seconds, so a broken path is replaced quickly.
-- On a write error at the tunnel device the client terminates the tunnel with an error instead of only re-establishing the affected peer connection.
-- On controller shutdown, relay sessions are terminated immediately and running HTTP requests are awaited for up to five seconds; on timeout the error is reported and the server is closed.
-- Controller state, credentials and received configuration are parsed strictly: unknown or duplicate JSON fields, oversized documents and trailing data are rejected.
-- Controller response headers are limited to 16 KiB when fetching the configuration and when establishing a relay connection.
-- On load, the controller additionally checks the CA and server key pairs, the server certificate including hostname and validity, and every registered device certificate: CA signature, not a CA itself, Ed25519 key, exactly the client and server authentication usages, and common name equal to the device ID. Expired or soon-expiring (30 days) certificates are logged as warnings at startup; an expired device certificate does not stop the controller.
-- The IPv4 network must lie within 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 or 100.64.0.0/10; IPv6 prefixes and addresses are stored in canonical form. A device ID must differ from the controller host name. New CAs are limited to issuing end-entity certificates (path length 0).
-- Different devices must not share a public key even with different certificates; inconsistent configurations are rejected.
-- New networks deny traffic between devices by default; static directional allow rules can be set via the CLI.
-- The relay and current clients only establish a peer session for device pairs with at least one directional allow rule; traffic is still checked separately per direction.
-- CLI for creating, adding and removing devices and for showing the members.
-- Optional offline enrollment: the device generates its private key itself; the administrator verifies and approves a signed certificate request.
+**Network**
+- One private IPv4 network (RFC 1918 or 100.64.0.0/10) and optionally one IPv6 ULA `/64`, up to 32 devices, one Linux TUN interface per device, MTU 1280.
+- Unicast only between assigned device addresses; source and destination are checked against spoofing on both ends.
+- Default deny: traffic needs a directional allow rule; an optional experimental filter restricts it further to protocols and destination ports.
 
-The member list is loaded at startup over authenticated TLS and is **not separately signed**. The controller controls the member list and holds the CA key. With the older `add-peer` it additionally generates the device key; with the offline enrollment described below the key is created on the device. A compromised controller can admit devices and manipulate connections by swapping certificates. A relay that only forwards packets, and whose controller/CA is not compromised, does not see the content of the inner TLS connection; it does see metadata such as the devices involved and data volume.
+**Security**
+- Device and controller identities are Ed25519 certificates from your own CA; the controller connection uses mutual TLS 1.3.
+- A second, end-to-end mutual TLS 1.3 session runs between each pair of devices through the relay; certificates are pinned to the controller's member list and verified against the CA. The relay cannot read the traffic.
+- Keys can be generated on the device (offline enrollment); device certificates are renewed online before they expire with a new key that never leaves the device.
+- Strict parsing and size limits for all network and file input; the controller validates its whole PKI on every reload and fails closed on inconsistent state.
+- Connection limits per source address, timeouts for every connection phase, and per-device relay limits protect the controller against exhaustion.
+- Secrets are refused if other users can read them.
 
-There are **no** direct peer connections, NAT hole punching, UDP transport, Ethernet/bridging, multicast, subnet gateways, stateful ACLs, GUI or interoperability with other VPN products yet. `status` shows the authorized member list, not the live connection state. The architecture decisions are in [docs/DECISIONS.md](docs/DECISIONS.md); every non-trivial decision made during development is logged in [docs/DECISION-LOG.md](docs/DECISION-LOG.md).
+**Operations**
+- Changes take effect within seconds without restarts; removing a device cuts it off immediately at the relay.
+- Clients ride out controller restarts (30 s grace period), reconnect with backoff and detect dead paths in seconds.
+- Structured logging (`log/slog`, text or JSON), `kinfold version`, hardened systemd units, reproducible release builds with checksums, and an [operator guide](docs/OPERATIONS.md).
 
-The [operator guide](docs/OPERATIONS.md) covers upgrades, backup and restore, certificate lifetimes, CA rotation and incident response.
+**Not included:** direct peer-to-peer connections, NAT traversal, UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, non-Linux clients, controller high availability. `status` shows the authorized members, not live connection state.
 
-The [security model](docs/SECURITY-MODEL.md) separates the properties of the prototype from the production requirements that are still open, in particular trust, policy and time-bound revocation.
+**Documentation:** [operator guide](docs/OPERATIONS.md) · [security model](docs/SECURITY-MODEL.md) · [architecture decisions](docs/DECISIONS.md) · [decision log](docs/DECISION-LOG.md) · [code review of the prototype](docs/review-v0.1-copilot.md) · [contributing](CONTRIBUTING.md)
+
+### Trust model in one paragraph
+
+The member list is delivered over authenticated TLS but is **not separately signed**. The controller holds the CA key and the member list, so a compromised controller can admit devices and manipulate connections by swapping certificates. With `add-peer` the controller also generates the device key; with offline enrollment the key is created on the device. A relay whose controller and CA are not compromised does not see the content of the inner TLS sessions, but it does see metadata such as which devices talk and how much.
 
 ## Note on the rename
 
@@ -237,6 +235,10 @@ After the first key issuance or migration, the controller state contains a new J
 - Only communication between the explicitly assigned IPv4/IPv6 addresses works. IPv6 is limited to a ULA `/64`; multicast, NDP, jumbograms, forwarding to other subnets and internet exit nodes are not supported.
 - Server and device certificates are valid for at most one year and no longer than the CA; the CA is valid for ten years. Existing peer sessions are locally limited to the earliest expiry of the certificates used. With a wrong clock, time jumps, suspend or tampered clients this is not proof of a time-bound block; the relay does not enforce this expiry itself. Device certificates are renewed automatically by running clients; server certificates are renewed manually with `renew-server`; CA rotation is a manual procedure (see the operator guide). The controller can move to a new address with `renew-server -server host:port`; devices then only need the new address in their credential (see the [operator guide](docs/OPERATIONS.md)).
 - The connection limits are not complete protection against resource abuse: an attacker with many source addresses can still exhaust the global connection limit, and bandwidth limiting is missing. No automatic backup or package installation; systemd units are provided but no distribution packages.
+- The controller state has no rollback protection. Restoring an older backup re-authorizes devices removed since, rejects devices renewed since and forgets key fingerprints recorded since (see the operator guide). Signed, versioned state is planned (#22).
+- `add-peer`, `approve` and `rotate-peer` write the output file before the state. If the state write fails, a CA-signed certificate exists that is not in the member list; it is useless for traffic (the relay requires membership) but stays valid until it expires.
+- Every configuration change closes all relay sessions and recreates the client tunnel, including for unrelated devices; targeted invalidation is planned (#20).
+- Kinfold has not been independently audited. The code review of the prototype and the alpha hardening are documented in `docs/`, but they are no substitute for an external review.
 
 ## Automatic device certificate renewal
 
