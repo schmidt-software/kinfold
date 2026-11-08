@@ -135,6 +135,31 @@ func TestStandbyServesWhenPrimaryIsDown(t *testing.T) {
 		t.Fatalf("controller list %v", got)
 	}
 
+	// A primary without a valid state answers with an unmarked 503; the
+	// device must use the standby instead of closing its tunnel.
+	statePath := filepath.Join(primaryDir, "state.json")
+	original, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		_, _, err := client.Fetch(ctx)
+		if err == nil && client.Current() == "localhost:"+standbyPort {
+			break
+		}
+		if errorsIsRefused(err) || time.Now().After(deadline) {
+			t.Fatalf("no failover from a primary without valid state: %v (current %s)", err, client.Current())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err := os.WriteFile(statePath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	stopPrimary()
 	cfg, id, err := client.Fetch(ctx)
 	if err != nil || id != "alice" || len(cfg.Peers) != 1 {
