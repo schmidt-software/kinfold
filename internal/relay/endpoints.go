@@ -23,6 +23,8 @@ const (
 	directAddrsHeader  = "X-Kinfold-Direct-Addrs"
 )
 
+var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+
 type registration struct {
 	addrs   []string
 	expires time.Time
@@ -65,8 +67,12 @@ func (s *Server) register(id string, r *http.Request, now time.Time) {
 			add(ip) // observed address first: works for public and NAT-forwarded setups
 		}
 	}
+	// Advertised addresses serve the LAN case, so only private ones are
+	// taken; a public address must be the one the controller observed. This
+	// limits how far a device can make its peers dial arbitrary hosts
+	// (v0.4 review finding 8).
 	for _, field := range strings.Split(r.Header.Get(directAddrsHeader), ",") {
-		if ip, err := netip.ParseAddr(strings.TrimSpace(field)); err == nil {
+		if ip, err := netip.ParseAddr(strings.TrimSpace(field)); err == nil && (ip.Unmap().IsPrivate() || cgnat.Contains(ip.Unmap())) {
 			add(ip)
 		}
 	}
