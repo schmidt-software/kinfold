@@ -379,3 +379,21 @@ keeps lock contention bounded without delaying a legitimate retry.
 
 **Consequences:** One more strict-decoded state field (`renewed_from`);
 `remove-peer` and offline rotation clear it.
+
+## D-019 — 2026-11-08 — active — Republish v0.2-alpha after the reproducibility fix
+
+**Decision:** The first `v0.2-alpha` release is withdrawn and the tag is
+moved to the commit that fixes the release script (#56); the release is
+published again under the same name.
+
+**Rationale:** Verifying the release by rebuilding it locally showed that
+three of four CI binaries were stamped `+dirty` (the script's output
+directory inside the repository counted as an untracked change), so the
+documented verification (`diff SHA256SUMS`) failed. The release was minutes
+old, marked as pre-release and in a private repository without users, so
+moving the tag misleads no one; a published release whose own verification
+instructions fail would.
+
+**Consequences:** Anyone who fetched the tag in those minutes must
+`git fetch --tags --force`. Tags are not moved again once a release has
+consumers; later fixes get new versions.
