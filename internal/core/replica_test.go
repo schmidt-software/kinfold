@@ -68,6 +68,17 @@ func TestReplicaPromotion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.AddPeer("alice", "10.77.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddReplica("alice-standby", "alice:8443"); err == nil {
+		t.Fatal("standby host name equal to a device ID accepted")
+	}
+	hostile := cred
+	hostile.Address = "alice:8443"
+	if err := s.Promote(hostile); err == nil {
+		t.Fatal("promoted to a host name equal to a device ID")
+	}
 	if err := s.ChangeServerAddress("standby.example.com:8443"); err == nil {
 		t.Fatal("moved the primary to a standby's address")
 	}
