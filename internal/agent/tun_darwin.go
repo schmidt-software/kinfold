@@ -158,8 +158,9 @@ func (u *utun) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// stripFamily removes the utun header; packets of other families are
-// returned as zero-length reads, which the agent ignores.
+// stripFamily removes the utun header without looking at the family: the
+// agent validates every packet's IP version and addresses itself. Frames
+// shorter than the header become zero-length reads, which the agent ignores.
 func stripFamily(frame, p []byte) (int, error) {
 	if len(frame) < 4 {
 		return 0, nil
