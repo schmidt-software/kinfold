@@ -160,3 +160,21 @@ permission checks and the grace-period argument (D-013), and found:
 | 9 | L/M | v0.1 states with non-canonical IPv6 no longer loaded. | #48: normalised on load. |
 | 10 | L | Controller unit install order failed (`useradd` without home). | #48. |
 | 11 | L | Release notes file missing; actions and govulncheck unpinned. | #48, #19. |
+
+## Review before v0.3.0-alpha
+
+An independent review of `v0.2.1-alpha..60b8d8c` (per-device views, metrics,
+token enrollment) found no critical or high issues and confirmed the
+completeness of `PairSignature`, the revocation behaviour of targeted
+invalidation and the controller authentication in `join`. Findings, all
+fixed in #71:
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 1 | M | Unauthenticated `/enroll` took the state lock before checking the token; failure throttling was per /128 and skipped busy results. | Token hashes cached from the watcher are checked first; throttling per IPv4 address or IPv6 /64, busy results count. |
+| 2 | L | `join` consumed the token before storing anything locally. | Pending file and idempotent retry with the same token and key. |
+| 3 | L | CONNECT distinguished hidden from unknown devices. | Same 403 answer. |
+| 4 | L | Pending tokens survived `approve`, `add-peer`, `remove-peer`; weak token validation. | Those commands drop matching tokens; validation checks address and lifetime. |
+| 5 | L | Token on the command line. | `-token-file` (or `-` for stdin). |
+| 6 | L | Go quoting instead of Prometheus label escaping. | Prometheus escaping. |
+| 7 | L | Data race in a supervisor test. | Test clones the configuration. |

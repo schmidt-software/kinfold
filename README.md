@@ -124,14 +124,16 @@ On the controller:
 ./kinfold token -data controller-data -id carol -ip 10.77.0.3 -ttl 1h
 ```
 
-The command prints the token once, together with a ready-made `join` command containing the controller address and the SHA-256 fingerprint of the CA. Send that command to the device over a confidential channel (anyone who has it before it is used can enroll as `carol`). On the device:
+The command prints the token once, together with a ready-made `join` command containing the controller address and the SHA-256 fingerprint of the CA. Send token and command to the device over a confidential channel (anyone who has the token before it is used can enroll as `carol`). On the device, pass the token on standard input or in a file, so it does not show up in process lists:
 
 ```sh
-./kinfold-linux join -server vpn.example.com:8443 -ca-sha256 <fingerprint> -id carol -token <token> -out carol.json
+./kinfold-linux join -server vpn.example.com:8443 -ca-sha256 <fingerprint> -id carol -token-file - -out carol.json
 sudo ./kinfold-linux run -credential carol.json
 ```
 
-`join` verifies the controller against the pinned CA fingerprint **before** it sends the token, so a machine in the middle cannot capture it. Tokens expire (default one hour, at most seven days), work once, and only for their ID and address; only a hash is stored. `token-list` shows pending tokens and `token-revoke -id carol` withdraws one. Failed attempts are slowed down per source address. To accept enrollments without a client certificate, the controller's TLS handshake no longer requires one; every endpoint other than `POST /enroll` still does.
+`join` keeps its key and request in `carol.json.joining` until the credential is written; if the response is lost, running the same command again collects the certificate that was already issued (a used token stays valid for exactly that key until it expires).
+
+`join` verifies the controller against the pinned CA fingerprint **before** it sends the token, so a machine in the middle cannot capture it. Tokens expire (default one hour, at most seven days), work once, and only for their ID and address; only a hash is stored. `token-list` shows pending tokens and `token-revoke -id carol` withdraws one; `add-peer`, `approve` and `remove-peer` drop the tokens of the device they handle, so a leftover token cannot re-enroll it later. Failed attempts are slowed down per source address. To accept enrollments without a client certificate, the controller's TLS handshake no longer requires one; every endpoint other than `POST /enroll` still does.
 
 ## Offline enrollment with a local key
 
