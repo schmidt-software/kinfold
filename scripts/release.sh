@@ -17,10 +17,16 @@ esac
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
-if [ -n "$(git status --porcelain)" ]; then
-  echo "working tree is not clean; refusing to build a release" >&2
-  exit 1
-fi
+# Go stamps a build as modified (+dirty) when git reports any change,
+# including untracked files, so the tree must stay clean for every target.
+require_clean() {
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "working tree is not clean; refusing to build a release:" >&2
+    git status --porcelain >&2
+    exit 1
+  fi
+}
+require_clean
 
 rm -rf "$out"
 mkdir -p "$out"
@@ -29,7 +35,12 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   goos=${target%/*}
   goarch=${target#*/}
   name="kinfold-$version-$goos-$goarch"
+  require_clean
   CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags "$ldflags" -o "$out/$name" .
+  if go version -m "$out/$name" | grep -q 'vcs.modified=true'; then
+    echo "$out/$name was stamped as modified; is $out inside the repository but not ignored?" >&2
+    exit 1
+  fi
   echo "built $out/$name"
 done
 cp packaging/systemd/*.service "$out/"
