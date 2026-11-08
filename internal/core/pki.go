@@ -254,7 +254,7 @@ func loadState(dir string, renewServer bool) (*State, error) {
 	if err := s.validateRenewedFrom(); err != nil {
 		return nil, err
 	}
-	if err := s.validateTokens(); err != nil {
+	if err := s.validateTokens(time.Now()); err != nil {
 		return nil, err
 	}
 	if err := s.validatePKI(renewServer); err != nil {
