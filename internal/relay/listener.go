@@ -3,6 +3,7 @@ package relay
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -27,9 +28,14 @@ type ListenerLimits struct {
 
 // DefaultListenerLimits fits the 32-device mesh: a client holds one control
 // connection plus at most 31 relay connections, and opens them in a burst
-// after a controller restart. A single source therefore needs up to 32
-// connections; 64 leaves room for two devices behind one NAT address.
-var DefaultListenerLimits = ListenerLimits{Total: 1152, PerSource: 64, RatePerSource: 20, BurstPerSource: 64}
+// after a controller restart. A single device therefore needs up to 32
+// connections; 128 leaves room for four devices behind one NAT address.
+var DefaultListenerLimits = ListenerLimits{Total: 1152, PerSource: 128, RatePerSource: 20, BurstPerSource: 128}
+
+// maxTrackedSources bounds the per-source state. Sources without open
+// connections are dropped when the map is full, so an attacker cycling
+// addresses cannot grow it without limit (change review finding 4).
+const maxTrackedSources = 8192
 
 // LimitListener bounds accepted TCP connections, including TLS handshakes and
 // hijacked relay connections. Close unblocks an Accept waiting for capacity.
@@ -111,6 +117,12 @@ func (l *limitedListener) admit(source string) bool {
 	now := l.now()
 	s := l.sources[source]
 	if s == nil {
+		if len(l.sources) >= maxTrackedSources {
+			l.sweep()
+			if len(l.sources) >= maxTrackedSources {
+				return false
+			}
+		}
 		s = &sourceState{tokens: float64(l.limits.BurstPerSource), last: now}
 		l.sources[source] = s
 	}
@@ -162,6 +174,16 @@ func (l *limitedListener) forgetIdle(source string, s *sourceState) {
 	delete(l.sources, source)
 }
 
+// sweep drops every source without open connections, forgetting its rate
+// history. Caller holds l.mu.
+func (l *limitedListener) sweep() {
+	for source, s := range l.sources {
+		if s.open == 0 {
+			delete(l.sources, source)
+		}
+	}
+}
+
 func (l *limitedListener) Close() error {
 	var err error
 	l.once.Do(func() {
@@ -171,16 +193,33 @@ func (l *limitedListener) Close() error {
 	return err
 }
 
+// remoteIP returns the accounting key for a connection: the IPv4 address,
+// or the /64 prefix for IPv6, because a single IPv6 host usually controls a
+// whole /64 and could otherwise bypass the per-source limits (change review
+// finding 5).
 func remoteIP(conn net.Conn) string {
-	addr := conn.RemoteAddr()
-	if tcp, ok := addr.(*net.TCPAddr); ok {
-		return tcp.IP.String()
+	var host string
+	if tcp, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		host = tcp.IP.String()
+	} else if h, _, err := net.SplitHostPort(conn.RemoteAddr().String()); err == nil {
+		host = h
+	} else {
+		return conn.RemoteAddr().String()
 	}
-	host, _, err := net.SplitHostPort(addr.String())
+	return sourceKey(host)
+}
+
+func sourceKey(host string) string {
+	addr, err := netip.ParseAddr(host)
 	if err != nil {
+		return host
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
 		return addr.String()
 	}
-	return host
+	prefix, _ := addr.WithZone("").Prefix(64)
+	return prefix.String()
 }
 
 type limitedConn struct {
