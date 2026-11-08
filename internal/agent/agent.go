@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -66,7 +67,16 @@ func packetAddresses(packet []byte) (netip.Addr, netip.Addr, error) {
 }
 
 // Run forwards only exact member-to-member IP traffic.
-func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID string, device io.ReadWriteCloser) (result error) {
+func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID string, device io.ReadWriteCloser) error {
+	return RunWithUpdates(ctx, cred, cfg, ownID, device, nil)
+}
+
+// RunWithUpdates is Run with configuration updates applied in place. An
+// update must keep the device's own addresses (the supervisor recreates the
+// tunnel otherwise). Peer links whose authorization is unchanged keep their
+// sessions; changed links are restarted and removed links stopped, without
+// touching the TUN device (review R-09).
+func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, ownID string, device io.ReadWriteCloser, updates <-chan core.Config) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if err := cfg.Validate(); err != nil {
@@ -78,36 +88,98 @@ func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID strin
 	}
 	localIP, _ := netip.ParseAddr(self.IP)
 	localIPv6, _ := netip.ParseAddr(self.IPv6)
-	links := make(map[netip.Addr]*link)
+	var current atomic.Pointer[core.Config]
+	var routes atomic.Pointer[map[netip.Addr]*link]
 	var writeMu sync.Mutex
 	var workers sync.WaitGroup
-	failures := make(chan error, len(cfg.Peers))
-	for _, p := range cfg.Peers {
-		if p.ID == ownID {
-			continue
+	failure := make(chan error, 1)
+	type runningLink struct {
+		link   *link
+		key    string
+		cancel context.CancelFunc
+	}
+	running := map[string]*runningLink{}
+	apply := func(cfg core.Config) error {
+		if err := cfg.Validate(); err != nil {
+			return err
 		}
-		allowIncoming, allowOutgoing := cfg.Permits(p.ID, ownID), cfg.Permits(ownID, p.ID)
-		if !allowIncoming && !allowOutgoing {
-			continue
+		self, ok := cfg.Peer(ownID)
+		if !ok || self.IP != localIP.String() || (self.IPv6 != "") != localIPv6.IsValid() || (localIPv6.IsValid() && self.IPv6 != localIPv6.String()) {
+			return fmt.Errorf("update changes the local peer's addresses")
 		}
-		ip, _ := netip.ParseAddr(p.IP)
-		peerIPv6, _ := netip.ParseAddr(p.IPv6)
-		l := &link{peer: p, allowIncoming: allowIncoming, allowOutgoing: allowOutgoing, localIPv6: localIPv6, peerIPv6: peerIPv6}
-		if cfg.Policy != nil && cfg.Policy.Services != nil {
-			l.servicesOn = true
-			l.inServices = compileServices(cfg.Policy.Services.Allowed, p.ID, ownID)
-			l.outServices = compileServices(cfg.Policy.Services.Allowed, ownID, p.ID)
+		current.Store(&cfg)
+		next := map[string]*runningLink{}
+		table := map[netip.Addr]*link{}
+		for _, p := range cfg.Peers {
+			if p.ID == ownID {
+				continue
+			}
+			allowIncoming, allowOutgoing := cfg.Permits(p.ID, ownID), cfg.Permits(ownID, p.ID)
+			if !allowIncoming && !allowOutgoing {
+				continue
+			}
+			ip, _ := netip.ParseAddr(p.IP)
+			peerIPv6, _ := netip.ParseAddr(p.IPv6)
+			l := &link{peer: p, allowIncoming: allowIncoming, allowOutgoing: allowOutgoing, localIPv6: localIPv6, peerIPv6: peerIPv6}
+			if cfg.Policy != nil && cfg.Policy.Services != nil {
+				l.servicesOn = true
+				l.inServices = compileServices(cfg.Policy.Services.Allowed, p.ID, ownID)
+				l.outServices = compileServices(cfg.Policy.Services.Allowed, ownID, p.ID)
+			}
+			key := l.key()
+			r := running[p.ID]
+			if r != nil && r.key == key {
+				delete(running, p.ID) // unchanged: keep the link and its session
+			} else {
+				linkCtx, linkCancel := context.WithCancel(ctx)
+				r = &runningLink{link: l, key: key, cancel: linkCancel}
+				workers.Add(1)
+				go func() {
+					defer workers.Done()
+					if err := l.run(linkCtx, cred, &current, ownID, localIP, device, &writeMu); err != nil {
+						select {
+						case failure <- err:
+						default:
+						}
+						cancel()
+					}
+				}()
+			}
+			next[p.ID] = r
+			table[ip] = r.link
+			if peerIPv6.IsValid() && localIPv6.IsValid() {
+				table[peerIPv6] = r.link
+			}
 		}
-		links[ip] = l
-		if peerIPv6.IsValid() && localIPv6.IsValid() {
-			links[peerIPv6] = l
+		for _, r := range running {
+			r.cancel() // removed or changed
 		}
+		running = next
+		routes.Store(&table)
+		return nil
+	}
+	if err := apply(cfg); err != nil {
+		return err
+	}
+	if updates != nil {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			if err := l.run(ctx, cred, cfg, ownID, localIP, device, &writeMu); err != nil {
-				failures <- err
-				cancel()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case next := <-updates:
+					if err := apply(next); err != nil {
+						select {
+						case failure <- fmt.Errorf("apply configuration update: %w", err):
+						default:
+						}
+						cancel()
+						return
+					}
+					slog.Info("configuration update applied without restarting the tunnel")
+				}
 			}
 		}()
 	}
@@ -120,9 +192,10 @@ func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID strin
 		cancel()
 		closeErr := <-closed
 		workers.Wait()
-		close(failures)
-		for err := range failures {
+		select {
+		case err := <-failure:
 			result = errors.Join(result, err)
+		default:
 		}
 		if closeErr != nil {
 			result = errors.Join(result, fmt.Errorf("close tunnel: %w", closeErr))
@@ -146,7 +219,7 @@ func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID strin
 		if err != nil || (src != localIP && (!localIPv6.IsValid() || src != localIPv6)) {
 			continue
 		}
-		l := links[dst]
+		l := (*routes.Load())[dst]
 		if l == nil || !l.allowOutgoing || (l.servicesOn && !servicePacket(packet, l.outServices)) {
 			continue
 		}
@@ -163,10 +236,23 @@ func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID strin
 	}
 }
 
-func (l *link) run(ctx context.Context, cred core.Credential, cfg core.Config, ownID string, localIP netip.Addr, device io.Writer, writeMu *sync.Mutex) error {
+// key identifies everything a link's behaviour depends on; links with the
+// same key can keep their session across configuration updates.
+func (l *link) key() string {
+	data, _ := json.Marshal(struct {
+		Peer                    core.Peer
+		In, Out, Services       bool
+		InServices, OutServices []string
+		LocalIPv6               string
+	}{l.peer, l.allowIncoming, l.allowOutgoing, l.servicesOn, l.inServices.keys(), l.outServices.keys(), l.localIPv6.String()})
+	return string(data)
+}
+
+func (l *link) run(ctx context.Context, cred core.Credential, cfg *atomic.Pointer[core.Config], ownID string, localIP netip.Addr, device io.Writer, writeMu *sync.Mutex) error {
 	var backoff retryBackoff
 	for ctx.Err() == nil {
-		conn, err := Connect(ctx, cred, cfg, ownID, l.peer)
+		// Reconnects present the revision of the configuration in force now.
+		conn, err := Connect(ctx, cred, *cfg.Load(), ownID, l.peer)
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Warn("peer connection failed", "peer", l.peer.ID, "error", err)

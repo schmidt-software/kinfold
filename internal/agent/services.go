@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/binary"
+	"fmt"
+	"sort"
 
 	"github.com/schmidt-software/kinfold/internal/core"
 )
@@ -75,4 +77,14 @@ func servicePacket(packet []byte, rules serviceSet) bool {
 	}
 	_, ok := rules[serviceKey{protocol: protocol, port: port}]
 	return ok
+}
+
+// keys lists the set's members in a stable order.
+func (s serviceSet) keys() []string {
+	out := make([]string, 0, len(s))
+	for k := range s {
+		out = append(out, fmt.Sprintf("%s/%d", k.protocol, k.port))
+	}
+	sort.Strings(out)
+	return out
 }
