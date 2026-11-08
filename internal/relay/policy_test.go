@@ -42,7 +42,7 @@ func TestRelayPeerPairAdmission(t *testing.T) {
 		server.ServeHTTP(recorder, req)
 		return recorder.Code
 	}
-	revision, err := state.Config.Revision()
+	revision, err := state.Config.ForPeer("alice").Revision()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestRelayPeerPairAdmission(t *testing.T) {
 	if err := state.Config.SetRule("bob", "alice", true); err != nil {
 		t.Fatal(err)
 	}
-	revision, err = state.Config.Revision()
+	revision, err = state.Config.ForPeer("alice").Revision()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestRelayPeerPairAdmission(t *testing.T) {
 		t.Fatalf("stale revision: %d", got)
 	}
 	state.Config.Policy = nil
-	revision, err = state.Config.Revision()
+	revision, err = state.Config.ForPeer("alice").Revision()
 	if err != nil {
 		t.Fatal(err)
 	}

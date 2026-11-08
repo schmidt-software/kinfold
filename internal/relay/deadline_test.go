@@ -40,7 +40,7 @@ func TestRelayResponseDeadlineErrorsReleaseEndpoint(t *testing.T) {
 			w := &blockingHijacker{conn: &failingDeadlineConn{Conn: left, failClear: failClear}, header: make(http.Header)}
 			done := make(chan struct{})
 			go func() {
-				server.connect(w, relayRequest(t, cfg), "alice", "bob", 0)
+				server.connect(w, relayRequest(t, cfg, "alice"), "alice", "bob", 0)
 				close(done)
 			}()
 			if failClear {
