@@ -43,7 +43,8 @@ the code review (`docs/review-v0.1-copilot.md`):
 - Secrets readable by other users are refused; the state directory itself is
   locked against concurrent writers.
 - Devices renew their certificates online with locally generated keys
-  (D-015); the controller can move to a new address without re-enrollment
+  (D-015); a lost renewal response can be recovered only with the new key
+  (D-018); the controller can move to a new address without re-enrollment
   (D-017).
 - Service units run the controller without capabilities and the client with
   only `CAP_NET_ADMIN` (D-016).
