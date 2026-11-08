@@ -44,7 +44,7 @@ func TestSuperviseRefreshAndFailClosed(t *testing.T) {
 		}
 		return current, "alice", nil
 	}
-	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser) error {
+	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser, _ <-chan core.Config) error {
 		<-ctx.Done()
 		stopped <- struct{}{}
 		return nil

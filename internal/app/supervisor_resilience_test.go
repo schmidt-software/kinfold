@@ -40,7 +40,7 @@ func (h *resilienceHarness) fetch(context.Context, core.Credential) (core.Config
 	return h.cfg, "alice", nil
 }
 
-func (h *resilienceHarness) run(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser) error {
+func (h *resilienceHarness) run(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser, _ <-chan core.Config) error {
 	<-ctx.Done()
 	h.stops.Add(1)
 	return nil
@@ -141,4 +141,59 @@ func TestSuperviseRetriesFailedTunnelStart(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	h.set(func() { h.openErr = nil })
 	eventually(t, "tunnel started after transient failure", func() bool { return h.opens.Load() == 2 })
+}
+
+func TestSuperviseHandsPolicyChangesToRunningAgent(t *testing.T) {
+	s, err := core.NewState("localhost:8443", "10.77.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred, err := s.AddPeer("alice", "10.77.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddPeer("bob", "10.77.0.2"); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	current := s.Config.Clone()
+	var opens atomic.Int32
+	received := make(chan core.Config, 4)
+	open := func(string, []string) (io.ReadWriteCloser, error) { opens.Add(1); return testDevice{}, nil }
+	fetch := func(context.Context, core.Credential) (core.Config, string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return current, "alice", nil
+	}
+	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser, updates <-chan core.Config) error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case c := <-updates:
+				received <- c
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- supervise(ctx, cred, "kf0", s.Config, "alice", 5*time.Millisecond, time.Hour, open, fetch, run) }()
+	defer func() { cancel(); <-result }()
+	eventually(t, "initial tunnel", func() bool { return opens.Load() == 1 })
+	mu.Lock()
+	if err := current.SetRule("alice", "bob", true); err != nil {
+		t.Fatal(err)
+	}
+	mu.Unlock()
+	select {
+	case c := <-received:
+		if !c.Permits("alice", "bob") {
+			t.Fatal("agent received a stale configuration")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("policy change did not reach the running agent")
+	}
+	if opens.Load() != 1 {
+		t.Fatalf("tunnel reopened %d times for a policy-only change", opens.Load()-1)
+	}
 }
