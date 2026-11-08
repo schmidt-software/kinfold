@@ -630,7 +630,8 @@ a second host with the same trust as the primary.
 **Consequences:** No quorum, manual promotion, up to two seconds of
 replication lag, and clocks of all controllers must be synchronised because
 devices accept only strictly newer configurations. Devices on different
-controllers can only use the direct path between them. The standby has no
+controllers cannot reach each other (corrected by D-032: direct-path
+endpoints are not replicated either). The standby has no
 systemd unit of its own; the controller unit with an added `-standby` flag
 is used.
 
@@ -711,3 +712,27 @@ needs the primary anyway.
 primary takes up to the maximum age to reach devices on the standby. A
 standby that is down longer than the maximum age together with the primary
 cannot be started until the primary is back or it is promoted.
+
+## D-032 — 2026-11-08 — active — Failover on unavailable controllers
+
+**Decision:** When fetching its configuration, a device treats any 503
+(unmarked: no valid configuration; marked: shutting down or standby) as one
+controller's condition and tries the remaining controllers. A 403 still ends
+the search. Only when no controller serves does an unmarked 503 count as an
+explicit refusal that closes the tunnel at once. Direct-path endpoints stay
+per controller. Devices that use different controllers cannot reach each
+other until they use the same controller again, and the documentation now
+says so.
+
+**Rationale:** Pre-release review of v0.5 (findings 3, 6). A primary whose
+state failed to load answered with an unmarked 503, and every device closed
+its tunnel although a healthy standby existed. The docs claimed that devices
+on different controllers could still use the direct path, but endpoints are
+registered only in the memory of the controller a device polls. Replicating
+or forwarding endpoint registrations would add a write path from standby to
+primary; that is out of scope for v0.5.
+
+**Consequences:** A device whose primary is broken uses the standby within
+one poll interval. A split between controllers can last up to the primary
+retry interval (one minute) after the primary returns, or as long as some
+devices cannot reach the primary.
