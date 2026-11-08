@@ -138,3 +138,25 @@ Addressed in the issue that touches the code:
 All H and M findings are fixed for `v0.2-alpha`. L findings are fixed where
 the change is local; the rest are documented as known limits or moved to
 `post-alpha` issues, with the reason recorded in the decision log.
+
+## Review of the alpha changes
+
+Before the release, the complete diff from `v0.1-copilot` to the alpha
+candidate was reviewed again by an independent reviewer that had the code
+and the threat model but not the lead's reasoning. It confirmed the
+authorization logic of the new renewal endpoint, the relay refactoring, the
+permission checks and the grace-period argument (D-013), and found:
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 1 | M/H | A lost `/renew` response locked the device out permanently (verified by test). | #47: idempotent retry with the replaced certificate, pending request stored on the device (D-018). |
+| 2 | L/M | The client could exit while a renewal was between request and storage. | #47: wait for in-flight renewal; resume at start. |
+| 3 | M | A connection superseded while writing its 200 response could still register as waiter, orphan the live waiter and leak a goroutine (verified by test). | #45. |
+| 4 | M | The listener's per-source map grew without bound. | #46: capped, idle sources swept. |
+| 5 | M | IPv6 sources were counted per /128. | #46: aggregated by /64. |
+| 6 | L/M | 64 connections per source broke three or more devices behind one NAT. | #46: default 128, documented. |
+| 7 | L | Every `/renew` took the state lock. | #47: window pre-check before the lock, failed attempts rate-limited. |
+| 8 | L | Renewals accelerated in the CA's last year. | #47: renewals that do not extend validity are refused. |
+| 9 | L/M | v0.1 states with non-canonical IPv6 no longer loaded. | #48: normalised on load. |
+| 10 | L | Controller unit install order failed (`useradd` without home). | #48. |
+| 11 | L | Release notes file missing; actions and govulncheck unpinned. | #48, #19. |
