@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -53,6 +54,8 @@ type Server struct {
 	metrics        *metrics.Registry
 	renew          Renewer
 	enroll         Enroller
+	signer         ed25519.PrivateKey // signs /config responses (D-025)
+	lease          time.Duration
 	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
 	renewInterval  time.Duration
 	pairingTimeout time.Duration
@@ -102,6 +105,21 @@ func (s *Server) registerMetrics() {
 
 func (s *Server) count(name, help string, labels metrics.Labels) {
 	s.metrics.Counter(name, help, labels).Inc()
+}
+
+// NewForState creates the relay for a controller state and enables signed
+// configuration with the state's signing key.
+func NewForState(state *core.State) (*Server, error) {
+	s, err := New(state.Config)
+	if err != nil {
+		return nil, err
+	}
+	key, err := core.ParseConfigKey(state.ConfigKey)
+	if err != nil {
+		return nil, fmt.Errorf("configuration signing key: %w", err)
+	}
+	s.SetConfigSigner(key, core.DefaultLease)
+	return s, nil
 }
 
 // view is the configuration one device receives and its revision, which the
@@ -392,6 +410,13 @@ func TLSConfig(s *core.State) (*tls.Config, error) {
 // returns the new device's ID and certificate. It does its own locking.
 type Enroller func(token string, request []byte) (string, []byte, error)
 
+// SetConfigSigner makes /config return signed envelopes with the given lease
+// and enables GET /config-key. It must be called before serving; devices
+// refuse unsigned configuration.
+func (s *Server) SetConfigSigner(key ed25519.PrivateKey, lease time.Duration) {
+	s.signer, s.lease = key, lease
+}
+
 // SetEnroller enables POST /enroll. It must be called before serving.
 func (s *Server) SetEnroller(e Enroller) { s.enroll = e }
 
@@ -479,10 +504,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/config":
+		if s.signer == nil {
+			s.reject(w, "configuration signing is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		env, err := core.SignConfig(s.signer, id, views[id].config, time.Now(), s.lease)
+		if err != nil {
+			slog.Error("signing configuration failed", "error", err)
+			s.reject(w, "configuration unavailable", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(views[id].config); err != nil {
+		if err := json.NewEncoder(w).Encode(env); err != nil {
 			slog.Warn("config response failed", "error", err)
 		}
+	case r.Method == http.MethodGet && r.URL.Path == "/config-key":
+		if s.signer == nil {
+			s.reject(w, "configuration signing is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			ConfigKey []byte `json:"config_key"`
+		}{s.signer.Public().(ed25519.PublicKey)})
 	case r.Method == http.MethodPost && r.URL.Path == "/renew":
 		s.handleRenew(w, r, id)
 	case r.Method == http.MethodConnect && r.URL.Path == "/relay":

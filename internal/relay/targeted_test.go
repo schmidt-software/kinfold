@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/schmidt-software/kinfold/internal/core"
 )
@@ -94,7 +95,7 @@ func TestUpdateClosesChangedPair(t *testing.T) {
 
 func TestConfigEndpointServesPerDeviceView(t *testing.T) {
 	state := threePeerState(t)
-	s, err := New(state.Config)
+	s, err := NewForState(state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,10 +108,16 @@ func TestConfigEndpointServesPerDeviceView(t *testing.T) {
 	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, r)
-	var got core.Config
-	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+	var env core.SignedConfig
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
 		t.Fatal(err)
 	}
+	pub, _ := state.ConfigPublicKey()
+	payload, err := core.VerifyConfig(env, pub, "alice", time.Time{}, time.Now())
+	if err != nil {
+		t.Fatalf("served configuration does not verify: %v", err)
+	}
+	got := payload.Config
 	if _, ok := got.Peer("carol"); ok || len(got.Policy.Allowed) != 2 {
 		t.Fatalf("alice's view leaks other devices or rules: %d peers, %d rules", len(got.Peers), len(got.Policy.Allowed))
 	}
