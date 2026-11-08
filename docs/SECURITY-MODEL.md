@@ -53,6 +53,18 @@ Known residual risks are listed below and in the README's "Known limits".
 
 ## Current implementation
 
+Since v0.4 traffic can also flow over direct TCP sessions between devices
+(DECISION-LOG D-026). The relay therefore no longer enforces revocation on
+its own: each endpoint drops a peer as soon as its signed configuration no
+longer authorizes it, closes its tunnel immediately when an authenticated
+controller refuses its configuration request, and closes it after 30
+seconds of controller unreachability or when the lease of its last signed
+configuration ends. With correct clocks, a revoked device can therefore
+exchange traffic with a peer for at most one poll interval after the peer's
+controller accepted the change, or for the lease duration if the peer cannot
+reach the controller.
+
+
 The Linux client obtains a member list from the controller over mutually
 authenticated TLS. The additional TLS connection per peer checks certificates
 against the delivered list and the CA. Since v0.4 the list is signed with a

@@ -555,3 +555,32 @@ has no rollback protection; the lease depends on device clocks (forward
 jumps fail closed, backward jumps extend at most to the issue-time check).
 Pinning the key from the authenticated connection for pre-v0.4 credentials
 trusts the controller exactly as before, once.
+
+## D-026 — 2026-11-08 — active — Direct TCP path with relay fallback
+
+**Decision:** Devices started with `-direct-listen` accept direct mutual-TLS
+sessions. They advertise port and local addresses with each configuration
+fetch; the controller adds the observed address, keeps registrations in
+memory for 30 s and includes the peers' endpoints, signed but outside the
+configuration (no revision change), in each device's envelope. The device
+without a listener, or with the smaller ID, dials; otherwise the relay is
+used, and relay sessions upgrade to a direct session when one becomes
+available. An accepted direct session is preferred over a pending relay
+pairing. The listener accepts only certificates of peers with a rule in the
+current signed configuration; at most 16 handshakes are in flight. A
+configuration request refused by an authenticated controller (403/503)
+closes the tunnel immediately, without the grace period.
+
+**Rationale:** Issue #21 within the D-021 scope: removes the relay as the
+throughput bottleneck where devices can reach each other, without custom
+cryptography or external modules. One dialing direction avoids duplicate
+sessions and tie-breaking protocols. Immediate fail-closed on explicit
+refusal restores the "ambiguous state fails closed" property that the relay
+used to provide for all traffic.
+
+**Consequences:** The D-013 revocation argument ("every path passes the
+relay") no longer holds; revocation on the direct path is bounded by the
+poll interval for reachable peers and by grace period and lease (D-025)
+otherwise, both depending on correct clocks. Devices behind NAT on both
+sides still need the relay. The direct listener is an additional
+unauthenticated TLS endpoint on the device.
