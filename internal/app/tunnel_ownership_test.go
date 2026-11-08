@@ -44,7 +44,7 @@ func TestSuperviseClosesTunnelOnceAndReportsCloseError(t *testing.T) {
 			fetch := func(context.Context, core.Credential) (core.Config, string, error) {
 				return state.Config, "alice", nil
 			}
-			run := func(_ context.Context, _ core.Credential, _ core.Config, _ string, tunnel io.ReadWriteCloser) error {
+			run := func(_ context.Context, _ core.Credential, _ core.Config, _ string, tunnel io.ReadWriteCloser, _ <-chan core.Config) error {
 				if runnerCloses {
 					return errors.Join(runErr, tunnel.Close())
 				}

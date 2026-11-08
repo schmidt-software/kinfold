@@ -29,7 +29,7 @@ func TestSuperviseReportsAgentFailureDuringFetch(t *testing.T) {
 		close(fetchStopped)
 		return core.Config{}, "", ctx.Err()
 	}
-	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser) error {
+	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser, _ <-chan core.Config) error {
 		select {
 		case <-fail:
 			return runErr
@@ -86,7 +86,7 @@ func TestSuperviseCancelsSingleOutstandingFetchOnShutdown(t *testing.T) {
 		}
 		return core.Config{}, "", ctx.Err()
 	}
-	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser) error {
+	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser, _ <-chan core.Config) error {
 		<-ctx.Done()
 		return nil
 	}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 
 type tunnelOpener func(name string, addresses []string) (io.ReadWriteCloser, error)
 type configFetcher func(context.Context, core.Credential) (core.Config, string, error)
-type agentRunner func(context.Context, core.Credential, core.Config, string, io.ReadWriteCloser) error
+type agentRunner func(context.Context, core.Credential, core.Config, string, io.ReadWriteCloser, <-chan core.Config) error
 
 type fetchResult struct {
 	config core.Config
@@ -43,7 +44,8 @@ func (d *ownedTunnel) Close() error {
 func supervise(ctx context.Context, cred core.Credential, iface string, initial core.Config, initialID string, interval, grace time.Duration, open tunnelOpener, fetch configFetcher, run agentRunner) (result error) {
 	var cancel context.CancelFunc
 	var done chan error
-	var revision string
+	var revision, tunnel string
+	var updates chan core.Config
 	stop := func() error {
 		if cancel == nil {
 			return nil
@@ -83,9 +85,11 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 		child, childCancel := context.WithCancel(ctx)
 		cancel = childCancel
 		done = make(chan error, 1)
-		revision = newRevision
+		revision, tunnel = newRevision, tunnelKey(cfg, id)
+		updates = make(chan core.Config, 1)
+		pending := updates
 		go func() {
-			err := run(child, cred, cfg, id, dev)
+			err := run(child, cred, cfg, id, dev, pending)
 			if closeErr := dev.Close(); closeErr != nil && !errors.Is(err, closeErr) {
 				err = errors.Join(err, fmt.Errorf("close tunnel: %w", closeErr))
 			}
@@ -166,6 +170,17 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 			if cancel != nil && revision == next && id == initialID {
 				continue
 			}
+			if cancel != nil && id == initialID && tunnelKey(cfg, id) == tunnel {
+				// Same device addresses: hand the change to the running
+				// agent instead of recreating the tunnel (review R-09).
+				select {
+				case <-updates: // replace an update the agent has not taken yet
+				default:
+				}
+				updates <- cfg
+				revision = next
+				continue
+			}
 			if err := stop(); err != nil {
 				return err
 			}
@@ -211,7 +226,7 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 			}()
 		}
 		fetch := func(ctx context.Context, _ core.Credential) (core.Config, string, error) { return client.Fetch(ctx) }
-		err := supervise(runCtx, cred, iface, cfg, id, 2*time.Second, fetchGrace, agent.OpenTunnel, fetch, agent.Run)
+		err := supervise(runCtx, cred, iface, cfg, id, 2*time.Second, fetchGrace, agent.OpenTunnel, fetch, agent.RunWithUpdates)
 		cancel()
 		// Never exit while a renewal is between request and storage
 		// (change review finding 2); an interrupted one resumes at start.
@@ -231,4 +246,11 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 			return err
 		}
 	}
+}
+
+// tunnelKey covers what the TUN device is configured with; a change that
+// keeps it can be applied to the running agent.
+func tunnelKey(cfg core.Config, id string) string {
+	self, _ := cfg.Peer(id)
+	return strings.Join([]string{id, self.IP, self.IPv6, cfg.Network, cfg.Network6}, "|")
 }

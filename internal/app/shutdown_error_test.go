@@ -25,7 +25,7 @@ func TestSuperviseReportsShutdownError(t *testing.T) {
 	fetch := func(context.Context, core.Credential) (core.Config, string, error) {
 		return state.Config, "alice", nil
 	}
-	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser) error {
+	run := func(ctx context.Context, _ core.Credential, _ core.Config, _ string, _ io.ReadWriteCloser, _ <-chan core.Config) error {
 		close(started)
 		<-ctx.Done()
 		return errors.New("tunnel shutdown failed")
