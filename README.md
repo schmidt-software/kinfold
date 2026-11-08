@@ -26,7 +26,7 @@ A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux and macO
 - Clients ride out controller restarts (30 s grace period), reconnect with backoff and detect dead paths in seconds.
 - Structured logging (`log/slog`, text or JSON), `kinfold version`, hardened systemd units, reproducible release builds with checksums, and an [operator guide](docs/OPERATIONS.md).
 
-**Not included:** NAT traversal (hole punching), UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, Windows and mobile clients, automatic controller failover with quorum. `status` shows the authorized members, not live connection state.
+**Not included:** NAT traversal (hole punching), UDP transport, Ethernet bridging, multicast, subnet gateways, stateful firewalling, GUI, Windows and mobile clients, automatic controller failover with quorum. `status` shows the authorized members; live state (last contact, relay sessions per device) is available as controller metrics.
 
 **Documentation:** [operator guide](docs/OPERATIONS.md) · [security model](docs/SECURITY-MODEL.md) · [architecture decisions](docs/DECISIONS.md) · [decision log](docs/DECISION-LOG.md) · [code review of the prototype](docs/review-v0.1-copilot.md) · [contributing](CONTRIBUTING.md)
 

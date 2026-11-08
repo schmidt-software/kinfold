@@ -806,3 +806,25 @@ and keeps the long-term rate exact.
 uplink together. The bucket state lives in memory, so a controller restart
 refills every bucket. Changing the limit requires a restart. Direct
 sessions are not limited.
+
+## D-036 — 2026-11-08 — active — Live device status as metrics
+
+**Decision:** The controller exports two metrics per device:
+`kinfold_device_last_seen_timestamp_seconds{peer}`, the time of the
+device's last configuration fetch from this controller (0 when it has not
+fetched since the controller started), and
+`kinfold_device_relay_endpoints{peer}`, its current waiting or bridged relay
+endpoints. The series follow the members of the configuration and disappear
+when a device is removed. They are registered after the relay lock is
+released, because a scrape calls the series functions while holding a
+metric family lock.
+
+**Rationale:** Issue #97. The status was only visible in logs. Devices poll
+every two seconds, so the last fetch time is a precise liveness signal that
+needs no extra protocol. Metrics are already loopback-only and scraped by
+operators. A new CLI command could not see the running process's memory.
+
+**Consequences:** Each controller sees only the devices that use it. With a
+standby, a device appears on the controller it currently uses. Direct
+sessions are not visible to the controller. Label cardinality is bounded by
+the 32-device limit.
