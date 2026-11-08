@@ -20,6 +20,11 @@ import (
 
 type link struct {
 	peer core.Peer
+	// incoming delivers accepted direct sessions to the link (D-026).
+	incoming chan net.Conn
+	// dial reports whether this side dials the peer directly.
+	dial      bool
+	endpoints func(peer string) []string
 	// queue is the send queue of the running session; only that session
 	// reads it. outbox points to the same channel while a session is
 	// connected and is nil otherwise. Each session gets a fresh channel, so
@@ -100,9 +105,14 @@ func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID strin
 // tunnel otherwise). Peer links whose authorization is unchanged keep their
 // sessions; changed links are restarted and removed links stopped, without
 // touching the TUN device (review R-09).
-func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, ownID string, device io.ReadWriteCloser, updates <-chan core.Config) (result error) {
+func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, ownID string, device io.ReadWriteCloser, updates <-chan core.Config, opts ...Option) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	var byFingerprint atomic.Pointer[map[string]*link]
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -144,7 +154,10 @@ func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, 
 			}
 			ip, _ := netip.ParseAddr(p.IP)
 			peerIPv6, _ := netip.ParseAddr(p.IPv6)
-			l := &link{peer: p, allowIncoming: allowIncoming, allowOutgoing: allowOutgoing, localIPv6: localIPv6, peerIPv6: peerIPv6}
+			l := &link{peer: p, incoming: make(chan net.Conn, 1), endpoints: o.endpoints, allowIncoming: allowIncoming, allowOutgoing: allowOutgoing, localIPv6: localIPv6, peerIPv6: peerIPv6}
+			// Only one side dials directly, so the two devices never build
+			// two sessions: the side without a listener, or the lower ID.
+			l.dial = o.endpoints != nil && (o.listenAddr == "" || ownID < p.ID)
 			if cfg.Policy != nil && cfg.Policy.Services != nil {
 				l.servicesOn = true
 				l.inServices = compileServices(cfg.Policy.Services.Allowed, p.ID, ownID)
@@ -180,10 +193,30 @@ func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, 
 		}
 		running = next
 		routes.Store(&table)
+		fps := make(map[string]*link, len(next))
+		for _, r := range next {
+			if cert, err := core.ParseCert(r.link.peer.Cert); err == nil {
+				fps[core.Fingerprint(cert)] = r.link
+			}
+		}
+		byFingerprint.Store(&fps)
 		return nil
 	}
 	if err := apply(cfg); err != nil {
 		return err
+	}
+	if o.listenAddr != "" {
+		lc := net.ListenConfig{KeepAliveConfig: clientKeepAlive}
+		ln, err := lc.Listen(ctx, "tcp", o.listenAddr)
+		if err != nil {
+			return fmt.Errorf("direct listener: %w", err)
+		}
+		slog.Info("accepting direct sessions", "address", ln.Addr().String())
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			acceptDirect(ctx, ln, cred, func(fp string) *link { return (*byFingerprint.Load())[fp] })
+		}()
 	}
 	if updates != nil {
 		workers.Add(1)
@@ -278,46 +311,181 @@ func (l *link) key() string {
 }
 
 func (l *link) run(ctx context.Context, cred core.Credential, cfg *atomic.Pointer[core.Config], ownID string, localIP netip.Addr, device io.Writer, writeMu *sync.Mutex) error {
+	defer peerPath(l.peer.ID, "direct").Set(0)
+	defer peerPath(l.peer.ID, "relay").Set(0)
+	defer func() {
+		for {
+			select {
+			case c := <-l.incoming:
+				c.Close() // never leave an accepted session open behind a stopped link
+			default:
+				return
+			}
+		}
+	}()
 	var backoff retryBackoff
+	var next net.Conn // a direct session accepted while another one was running
 	for ctx.Err() == nil {
-		// Reconnects present the revision of the configuration in force now.
-		conn, err := Connect(ctx, cred, *cfg.Load(), ownID, l.peer)
+		conn, path, err := next, "direct", error(nil)
+		next = nil
+		if conn == nil {
+			select {
+			case conn = <-l.incoming:
+			default:
+				conn, path, err = l.connect(ctx, cred, cfg, ownID)
+			}
+		}
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Warn("peer connection failed", "peer", l.peer.ID, "error", err)
 			}
 		} else {
-			slog.Info("peer connected through relay", "peer", l.peer.ID)
-			queue := make(chan []byte, peerQueueDepth)
-			l.queue = queue
-			l.outbox.Store(&queue)
-			peerConnected(l.peer.ID).Set(1)
-			started := time.Now()
-			err = l.session(ctx, conn, localIP, device, writeMu)
-			if time.Since(started) >= stableLink {
-				backoff.reset()
-			}
-			l.outbox.Store(nil)
-			peerConnected(l.peer.ID).Set(0)
-			conn.Close()
+			slog.Info("peer connected", "peer", l.peer.ID, "path", path)
 			var writeErr *tunnelWriteError
+			next, err = l.runSession(ctx, cred, conn, path, localIP, device, writeMu, &backoff)
 			if errors.As(err, &writeErr) {
 				return fmt.Errorf("peer %s: %w", l.peer.ID, writeErr)
 			}
+			if next != nil {
+				continue // upgrade to the direct session right away
+			}
 			if ctx.Err() == nil {
-				slog.Warn("peer disconnected", "peer", l.peer.ID, "error", err)
+				slog.Warn("peer disconnected", "peer", l.peer.ID, "path", path, "error", err)
 			}
 		}
-		delay := backoff.next()
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(backoff.next())
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return nil
+		case next = <-l.incoming:
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
 	return nil
+}
+
+// connect dials the peer directly when this side dials and the peer has
+// signed direct endpoints, and falls back to the relay.
+func (l *link) connect(ctx context.Context, cred core.Credential, cfg *atomic.Pointer[core.Config], ownID string) (net.Conn, string, error) {
+	if l.dial && l.endpoints != nil {
+		for _, addr := range l.endpoints(l.peer.ID) {
+			conn, err := dialDirect(ctx, cred, l.peer, addr)
+			if err == nil {
+				return conn, "direct", nil
+			}
+			slog.Debug("direct connection failed; trying next path", "peer", l.peer.ID, "address", addr, "error", err)
+		}
+	}
+	// The relay is the fallback. While its pairing waits for the peer, a
+	// direct session the peer opened to us takes precedence.
+	relayCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	relayed := make(chan result, 1)
+	go func() {
+		// Reconnects present the revision of the configuration in force now.
+		conn, err := Connect(relayCtx, cred, *cfg.Load(), ownID, l.peer)
+		relayed <- result{conn, err}
+	}()
+	select {
+	case r := <-relayed:
+		return r.conn, "relay", r.err
+	case direct := <-l.incoming:
+		cancel()
+		if r := <-relayed; r.conn != nil {
+			r.conn.Close()
+		}
+		return direct, "direct", nil
+	}
+}
+
+const (
+	directUpgradeFirst = 3 * time.Second
+	directUpgradeEvery = 30 * time.Second
+)
+
+// tryDirect dials the peer's direct endpoints and hands a session over as
+// if it had been accepted, which makes runSession switch to it. It reports
+// whether the peer had endpoints to try.
+func (l *link) tryDirect(ctx context.Context, cred core.Credential) bool {
+	endpoints := l.endpoints(l.peer.ID)
+	for _, addr := range endpoints {
+		conn, err := dialDirect(ctx, cred, l.peer, addr)
+		if err != nil {
+			slog.Debug("direct upgrade failed", "peer", l.peer.ID, "address", addr, "error", err)
+			continue
+		}
+		select {
+		case l.incoming <- conn:
+		default:
+			conn.Close()
+		}
+		return true
+	}
+	return len(endpoints) > 0
+}
+
+// runSession runs one session. A direct session arriving while a relay
+// session runs replaces it; that session is returned as next.
+func (l *link) runSession(ctx context.Context, cred core.Credential, conn net.Conn, path string, localIP netip.Addr, device io.Writer, writeMu *sync.Mutex, backoff *retryBackoff) (next net.Conn, err error) {
+	queue := make(chan []byte, peerQueueDepth)
+	l.queue = queue
+	l.outbox.Store(&queue)
+	peerConnected(l.peer.ID).Set(1)
+	peerPath(l.peer.ID, path).Set(1)
+	defer func() {
+		l.outbox.Store(nil)
+		peerConnected(l.peer.ID).Set(0)
+		peerPath(l.peer.ID, path).Set(0)
+		conn.Close()
+	}()
+	started := time.Now()
+	sessCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- l.session(sessCtx, conn, localIP, device, writeMu) }()
+	// On the relay, the dialing side keeps trying the direct path (its
+	// endpoints may only arrive with a later configuration fetch); a direct
+	// session it opens arrives on l.incoming like an accepted one.
+	if path == "relay" && l.dial && l.endpoints != nil {
+		go func() {
+			wait := directUpgradeFirst
+			for {
+				select {
+				case <-sessCtx.Done():
+					return
+				case <-time.After(wait):
+				}
+				// Retry soon while no endpoint is known yet; back off once
+				// an attempt was actually made.
+				if l.tryDirect(sessCtx, cred) {
+					wait = directUpgradeEvery
+				}
+			}
+		}()
+	}
+	for {
+		select {
+		case err = <-done:
+			if time.Since(started) >= stableLink {
+				backoff.reset()
+			}
+			return next, err
+		case incoming := <-l.incoming:
+			if path == "direct" || next != nil {
+				incoming.Close() // keep the running direct session
+				continue
+			}
+			next = incoming
+			slog.Info("switching peer to the direct path", "peer", l.peer.ID)
+			cancel()
+		}
+	}
 }
 
 func (l *link) session(ctx context.Context, conn net.Conn, localIP netip.Addr, device io.Writer, writeMu *sync.Mutex) error {
