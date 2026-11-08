@@ -40,6 +40,13 @@ type Option func(*options)
 type options struct {
 	listenAddr string
 	endpoints  func(peer string) []string
+	server     func() string
+}
+
+// WithController makes relay connections use the controller that server
+// returns (the one that answered last), for controller failover (D-028).
+func WithController(server func() string) Option {
+	return func(o *options) { o.server = server }
 }
 
 // WithDirect enables direct sessions: the agent accepts them on listenAddr

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -56,6 +57,72 @@ type ConfigClient struct {
 	directPort int       // advertised direct-session port, 0 when disabled
 	directIPs  []string  // advertised local addresses
 	endpoints  map[string][]string
+
+	// Controller failover (D-028): the credential's server is the primary;
+	// standbys come from signed configurations or a persisted list.
+	controllers   []string
+	current       string
+	lastPrimaryAt time.Time
+}
+
+// primaryRetry is how often a client on a standby tries the primary again.
+const primaryRetry = time.Minute
+
+// SetControllers seeds the controller list (primary first), e.g. from the
+// list persisted by an earlier run.
+func (c *ConfigClient) SetControllers(list []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.controllers = append([]string(nil), list...)
+}
+
+// Controllers returns the controller list from the last configuration.
+func (c *ConfigClient) Controllers() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.controllers...)
+}
+
+// Current returns the controller that answered last.
+func (c *ConfigClient) Current() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.current == "" {
+		return c.cred.Server
+	}
+	return c.current
+}
+
+// order lists the controllers to try: the current one first, the primary
+// first when it has not been tried for primaryRetry.
+func (c *ConfigClient) order(now time.Time) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	primary := c.cred.Server
+	current := c.current
+	if current == "" {
+		current = primary
+	}
+	out := []string{current}
+	if current != primary && now.Sub(c.lastPrimaryAt) >= primaryRetry {
+		out = []string{primary, current}
+		c.lastPrimaryAt = now
+	}
+	add := func(addr string) {
+		for _, x := range out {
+			if x == addr {
+				return
+			}
+		}
+		out = append(out, addr)
+	}
+	add(primary)
+	for _, addr := range c.controllers {
+		if core.ValidateServerAddress(addr) == nil {
+			add(addr)
+		}
+	}
+	return out
 }
 
 // SetDirect makes every fetch advertise that this device accepts direct
@@ -107,7 +174,7 @@ func (c *ConfigClient) Renew(ctx context.Context, request []byte) ([]byte, error
 	if c.err != nil {
 		return nil, c.err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+c.cred.Server+"/renew", bytes.NewReader(request))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+c.Current()+"/renew", bytes.NewReader(request))
 	if err != nil {
 		return nil, err
 	}
@@ -217,24 +284,42 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 	}
 	cred, client := c.cred, c.client
 	tlsCfg := c.transport.TLSClientConfig
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+cred.Server+"/config", nil)
-	if err != nil {
-		return core.Config{}, "", err
-	}
-	c.mu.Lock()
-	if c.directPort > 0 {
-		req.Header.Set("X-Kinfold-Direct-Port", strconv.Itoa(c.directPort))
-		if len(c.directIPs) > 0 {
-			req.Header.Set("X-Kinfold-Direct-Addrs", strings.Join(c.directIPs, ","))
+	var resp *http.Response
+	var server string
+	var lastErr error
+	for _, server = range c.order(time.Now()) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+server+"/config", nil)
+		if err != nil {
+			return core.Config{}, "", err
+		}
+		c.mu.Lock()
+		if c.directPort > 0 {
+			req.Header.Set("X-Kinfold-Direct-Port", strconv.Itoa(c.directPort))
+			if len(c.directIPs) > 0 {
+				req.Header.Set("X-Kinfold-Direct-Addrs", strings.Join(c.directIPs, ","))
+			}
+		}
+		c.mu.Unlock()
+		resp, err = client.Do(req)
+		if err == nil {
+			break // any answer, including a refusal, comes from an authenticated controller
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return core.Config{}, "", err
 		}
 	}
-	c.mu.Unlock()
-	resp, err := client.Do(req)
-	if err != nil {
-		return core.Config{}, "", err
+	if resp == nil {
+		return core.Config{}, "", lastErr
 	}
 	defer resp.Body.Close()
-	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable) && resp.Header.Get("X-Kinfold-Shutdown") == "" {
+	if server != c.Current() {
+		slog.Info("using controller", "address", server)
+	}
+	c.mu.Lock()
+	c.current = server
+	c.mu.Unlock()
+	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable) && resp.Header.Get("X-Kinfold-Shutdown") == "" && resp.Header.Get("X-Kinfold-Standby") == "" {
 		return core.Config{}, "", fmt.Errorf("%w: %q", ErrRefused, resp.Status)
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -264,6 +349,9 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 			// clock, independent of how its wall clock compares to the
 			// controller's (v0.4 review finding 3).
 			c.notBefore, c.leaseUntil, c.endpoints = payload.IssuedAt, time.Now().Add(payload.LeaseDuration()), payload.Endpoints
+			if len(payload.Controllers) > 0 {
+				c.controllers = payload.Controllers
+			}
 			c.mu.Unlock()
 			return cfg, p.ID, nil
 		}
