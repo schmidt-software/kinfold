@@ -449,11 +449,8 @@ func (s *State) ChangeServerAddress(address string) error {
 	if err := ValidateServerAddress(address); err != nil {
 		return err
 	}
-	host, _, _ := net.SplitHostPort(address)
-	for _, peer := range s.Config.Peers {
-		if strings.EqualFold(peer.ID, host) {
-			return fmt.Errorf("new controller host name %q equals the ID of a device", host)
-		}
+	if err := s.checkControllerHost(address); err != nil {
+		return err
 	}
 	for _, r := range s.Replicas {
 		if r.Address == address {
@@ -469,6 +466,18 @@ func (s *State) ChangeServerAddress(address string) error {
 	if err != nil {
 		s.Server, s.ServerCert, s.ServerKey = old, oldCert, oldKey
 		return err
+	}
+	return nil
+}
+
+// checkControllerHost rejects a controller address whose host name equals a
+// device ID, so a device certificate can never pass as a controller's.
+func (s *State) checkControllerHost(address string) error {
+	host, _, _ := net.SplitHostPort(address)
+	for _, peer := range s.Config.Peers {
+		if strings.EqualFold(peer.ID, host) {
+			return fmt.Errorf("controller host name %q equals the ID of a device", host)
+		}
 	}
 	return nil
 }

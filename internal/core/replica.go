@@ -70,6 +70,9 @@ func (s *State) AddReplica(id, address string) (ReplicaCredential, error) {
 	if address == s.Server {
 		return ReplicaCredential{}, fmt.Errorf("a replica needs its own address")
 	}
+	if err := s.checkControllerHost(address); err != nil {
+		return ReplicaCredential{}, err
+	}
 	for _, r := range s.Replicas {
 		if strings.EqualFold(r.ID, id) || r.Address == address {
 			return ReplicaCredential{}, fmt.Errorf("replica %s or address %s already exists", id, address)
@@ -165,6 +168,9 @@ func (s *State) Promote(cred ReplicaCredential) error {
 	}
 	if index < 0 {
 		return fmt.Errorf("the state does not list this standby as replica at %s", cred.Address)
+	}
+	if err := s.checkControllerHost(cred.Address); err != nil {
+		return err
 	}
 	next := *s
 	next.Server = cred.Address
