@@ -48,6 +48,8 @@ const defaultPairingTimeout = 30 * time.Second
 
 type Server struct {
 	renew          Renewer
+	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
+	renewInterval  time.Duration
 	pairingTimeout time.Duration
 	config         core.Config
 	revision       string            // config.Revision(), computed once per update
@@ -69,7 +71,7 @@ func New(config core.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{pairingTimeout: defaultPairingTimeout, config: config, revision: revision, members: members, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}, nil
+	return &Server{pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}, nil
 }
 
 // derive precomputes the per-request lookups for a validated configuration
@@ -153,6 +155,34 @@ func forceClose(conns ...net.Conn) {
 	}
 }
 
+// defaultRenewalInterval is how long a certificate must wait after a failed
+// renewal attempt; each attempt may take the controller's state lock
+// (change review finding 7). Successful attempts are not limited, so a
+// device can collect a certificate whose response was lost right away.
+const defaultRenewalInterval = 30 * time.Second
+
+func (s *Server) renewalBlocked(fingerprint string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for fp, last := range s.renewFailures {
+		if now.Sub(last) >= s.renewInterval {
+			delete(s.renewFailures, fp)
+		}
+	}
+	_, blocked := s.renewFailures[fingerprint]
+	return blocked
+}
+
+func (s *Server) noteRenewalFailure(fingerprint string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.renewFailures == nil {
+		s.renewFailures = make(map[string]time.Time)
+	}
+	s.renewFailures[fingerprint] = time.Now()
+}
+
 // SetRenewer enables POST /renew. It must be called before serving.
 func (s *Server) SetRenewer(r Renewer) { s.renew = r }
 
@@ -161,12 +191,22 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request, id string) 
 		reject(w, "not found", http.StatusNotFound)
 		return
 	}
+	presented := r.TLS.PeerCertificates[0]
+	fingerprint := core.Fingerprint(presented)
+	if s.renewalBlocked(fingerprint) {
+		w.Header().Set("Retry-After", "30")
+		reject(w, "renewal recently failed; retry later", http.StatusTooManyRequests)
+		return
+	}
 	request, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRenewalRequestBytes))
 	if err != nil {
 		reject(w, "renewal request too large or unreadable", http.StatusBadRequest)
 		return
 	}
-	cert, err := s.renew(id, r.TLS.PeerCertificates[0], request)
+	cert, err := s.renew(id, presented, request)
+	if err != nil && !errors.Is(err, ErrBusy) {
+		s.noteRenewalFailure(fingerprint)
+	}
 	switch {
 	case errors.Is(err, core.ErrRenewalNotDue):
 		reject(w, err.Error(), http.StatusConflict)
@@ -262,6 +302,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := identity(r, members)
 	if !ok {
+		// A device whose renewal response was lost presents its previous,
+		// CA-signed certificate; the renewer decides whether it may collect
+		// the certificate that was already issued (D-018).
+		if r.Method == http.MethodPost && r.URL.Path == "/renew" && s.renew != nil && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+			s.handleRenew(w, r, "")
+			return
+		}
 		reject(w, "not authorized", http.StatusForbidden)
 		return
 	}
