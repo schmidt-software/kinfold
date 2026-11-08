@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -41,7 +43,7 @@ func (d *ownedTunnel) Close() error {
 // the tunnel is closed (fail closed) until the controller answers again. A
 // failed tunnel start after a configuration change is retried on the next
 // tick instead of terminating the client.
-func supervise(ctx context.Context, cred core.Credential, iface string, initial core.Config, initialID string, interval, grace time.Duration, open tunnelOpener, fetch configFetcher, run agentRunner) (result error) {
+func supervise(ctx context.Context, cred core.Credential, iface string, initial core.Config, initialID string, interval, grace time.Duration, leaseUntil func() time.Time, open tunnelOpener, fetch configFetcher, run agentRunner) (result error) {
 	var cancel context.CancelFunc
 	var done chan error
 	var revision, tunnel string
@@ -128,6 +130,16 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 			}
 			return fmt.Errorf("tunnel stopped: %w", err)
 		case <-ticker.C:
+			// A signed configuration may only be used until its lease ends;
+			// without a fresh one the tunnel closes (D-025).
+			if leaseUntil != nil && cancel != nil {
+				if until := leaseUntil(); !until.IsZero() && !time.Now().Before(until) {
+					if err := stop(); err != nil {
+						return err
+					}
+					slog.Warn("configuration lease expired; tunnel closed until a fresh configuration arrives", "lease_until", until)
+				}
+			}
 			if fetched != nil {
 				continue
 			}
@@ -235,8 +247,25 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 			}()
 		}
 		fetch := func(ctx context.Context, _ core.Credential) (core.Config, string, error) { return client.Fetch(ctx) }
-		err := supervise(runCtx, cred, iface, cfg, id, 2*time.Second, fetchGrace, agent.OpenTunnel, fetch, agent.RunWithUpdates)
+		client.SetNotBefore(readSeen(path))
+		persistDone := make(chan struct{})
+		go func() {
+			defer close(persistDone)
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-runCtx.Done():
+					writeSeen(path, client.NotBefore())
+					return
+				case <-ticker.C:
+					writeSeen(path, client.NotBefore())
+				}
+			}
+		}()
+		err := supervise(runCtx, cred, iface, cfg, id, 2*time.Second, fetchGrace, client.LeaseUntil, agent.OpenTunnel, fetch, agent.RunWithUpdates)
 		cancel()
+		<-persistDone
 		// Never exit while a renewal is between request and storage
 		// (change review finding 2); an interrupted one resumes at start.
 		renewing.Wait()
@@ -262,4 +291,52 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 func tunnelKey(cfg core.Config, id string) string {
 	self, _ := cfg.Peer(id)
 	return strings.Join([]string{id, self.IP, self.IPv6, cfg.Network, cfg.Network6}, "|")
+}
+
+// The rollback watermark (newest accepted configuration issue time) is
+// persisted next to the credential so a restart cannot be fed an older,
+// validly signed configuration (D-025).
+func seenPath(credential string) string { return credential + ".seen" }
+
+func readSeen(credential string) time.Time {
+	data, err := os.ReadFile(seenPath(credential))
+	if err != nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data)))
+	if err != nil {
+		slog.Warn("ignoring unreadable configuration watermark", "path", seenPath(credential), "error", err)
+		return time.Time{}
+	}
+	return t
+}
+
+func writeSeen(credential string, t time.Time) {
+	if t.IsZero() || !t.After(readSeen(credential)) {
+		return
+	}
+	if err := writeFileAtomic(seenPath(credential), []byte(t.UTC().Format(time.RFC3339Nano)+"\n")); err != nil {
+		slog.Warn("could not persist configuration watermark", "error", err)
+	}
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }

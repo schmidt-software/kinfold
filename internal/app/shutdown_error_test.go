@@ -32,7 +32,9 @@ func TestSuperviseReportsShutdownError(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- supervise(ctx, cred, "kf0", state.Config, "alice", time.Hour, 0, open, fetch, run) }()
+	go func() {
+		done <- supervise(ctx, cred, "kf0", state.Config, "alice", time.Hour, 0, nil, open, fetch, run)
+	}()
 	<-started
 	cancel()
 	select {

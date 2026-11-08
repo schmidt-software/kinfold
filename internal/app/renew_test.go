@@ -31,7 +31,7 @@ func renewalController(t *testing.T, now func() time.Time) (dir, credPath string
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.New(state.Config)
+	handler, err := relay.NewForState(state)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -52,7 +52,7 @@ func TestSuperviseRefreshAndFailClosed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- supervise(ctx, cred, "kf0", initial, "alice", 10*time.Millisecond, 0, open, fetch, run)
+		result <- supervise(ctx, cred, "kf0", initial, "alice", 10*time.Millisecond, 0, nil, open, fetch, run)
 	}()
 	waitAddress := func(expected string) {
 		t.Helper()
