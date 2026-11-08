@@ -828,3 +828,28 @@ operators. A new CLI command could not see the running process's memory.
 standby, a device appears on the controller it currently uses. Direct
 sessions are not visible to the controller. Label cardinality is bounded by
 the 32-device limit.
+
+## D-037 — 2026-11-08 — active — macOS launch daemon and IPv6 smoke test
+
+**Decision:** The client gets a launch daemon definition for macOS.
+- `packaging/launchd/kinfold-client.plist` runs one client as root.
+- Credential path: `/Library/Application Support/Kinfold/credential.json`.
+- Log: `/var/log/kinfold-client.log`, in JSON.
+- launchd restarts the client after a crash (`KeepAlive`, 10 s throttle).
+- Umask is `077`.
+- The file ships with the release next to the systemd units and is listed
+  in `SHA256SUMS`.
+
+The macOS smoke test also assigns ULA addresses and pings over IPv6 in both
+directions. Adding the IPv6 prefix route tolerates "File exists", because
+assigning the address can already install that route.
+
+**Rationale:** Issue #98. Without a service definition the macOS client
+only ran in a terminal. IPv6 on macOS was the one client path without an
+end-to-end test, as the v0.5 release notes said. launchd offers no
+capability-style confinement for a root daemon that creates interfaces.
+The plist therefore restricts only what launchd can: umask and restarts.
+
+**Consequences:** The macOS client runs unconfined as root. The plist was
+validated with `plutil` but not loaded in CI. The smoke test still needs a
+person with sudo on a Mac.
