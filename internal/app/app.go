@@ -46,6 +46,10 @@ Commands:
   status       Show the authorized network configuration
   check-config Compare the on-disk and loaded controller configuration
   run          Run the Linux TUN client
+  token        Issue a single-use online enrollment token (controller)
+  token-list   List pending enrollment tokens
+  token-revoke Revoke a pending enrollment token
+  join         Enroll this device online with a token
   renew        Renew this device's certificate if it is due
   version      Show build information
 
@@ -671,6 +675,7 @@ func Run(args []string) error {
 			return err
 		}
 		handler.SetRenewer(controllerRenewer(*dir, time.Now))
+		handler.SetEnroller(controllerEnroller(*dir, time.Now))
 		server := newControllerServer(handler, tlsCfg, defaultServerTimeouts)
 		for _, warning := range s.CertificateWarnings(time.Now(), 30*24*time.Hour) {
 			slog.Warn(warning)
@@ -796,6 +801,127 @@ func Run(args []string) error {
 			return err
 		}
 		fmt.Printf("Renewed certificate in %s, valid until %s. Restart a running client to use it.\n", *path, next.NotAfter.UTC().Format(time.DateOnly))
+		return nil
+	case "token":
+		f := flags("token")
+		dir := f.String("data", "controller-data", "controller data directory")
+		id := f.String("id", "", "device ID the token enrolls")
+		ip := f.String("ip", "", "IPv4 address the device receives")
+		ttl := f.Duration("ttl", core.DefaultTokenTTL, "token lifetime (at most 168h)")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		if *id == "" || *ip == "" {
+			return fmt.Errorf("-id and -ip are required")
+		}
+		s, lock, err := loadWritableState(*dir)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		secret, err := s.IssueToken(*id, *ip, *ttl, time.Now())
+		if err != nil {
+			return err
+		}
+		if err := core.WriteJSON(filepath.Join(*dir, "state.json"), s); err != nil {
+			return err
+		}
+		caFP, err := caFingerprint(s)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Enrollment token for %s (%s), valid until %s, single use:\n\n  %s\n\n", *id, *ip, s.EnrollmentTokens[len(s.EnrollmentTokens)-1].NotAfter.Format(time.RFC3339), secret)
+		fmt.Printf("Give the device this command over a confidential channel:\n\n  kinfold join -server %s -ca-sha256 %s -id %s -token %s -out %s.json\n\n", s.Server, caFP, *id, secret, *id)
+		fmt.Println("The token is shown only once; revoke it with token-revoke if it leaks.")
+		return nil
+	case "token-list":
+		f := flags("token-list")
+		dir := f.String("data", "controller-data", "controller data directory")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		s, err := core.LoadState(*dir)
+		if err != nil {
+			return err
+		}
+		s.PruneTokens(time.Now())
+		if len(s.EnrollmentTokens) == 0 {
+			fmt.Println("No pending enrollment tokens.")
+		}
+		for _, t := range s.EnrollmentTokens {
+			fmt.Printf("  %s  %s  valid until %s\n", t.ID, t.IP, t.NotAfter.Format(time.RFC3339))
+		}
+		return nil
+	case "token-revoke":
+		f := flags("token-revoke")
+		dir := f.String("data", "controller-data", "controller data directory")
+		id := f.String("id", "", "device ID whose pending token to revoke")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		s, lock, err := loadWritableState(*dir)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		if !s.RevokeToken(*id) {
+			return fmt.Errorf("no pending token for %q", *id)
+		}
+		if err := core.WriteJSON(filepath.Join(*dir, "state.json"), s); err != nil {
+			return err
+		}
+		fmt.Printf("Revoked the pending enrollment token for %s.\n", *id)
+		return nil
+	case "join":
+		f := flags("join")
+		server := f.String("server", "", "controller host:port")
+		fp := f.String("ca-sha256", "", "SHA-256 fingerprint of the controller CA (from the administrator)")
+		id := f.String("id", "", "device ID the token was issued for")
+		token := f.String("token", "", "single-use enrollment token")
+		out := f.String("out", "", "new private credential file")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		if *server == "" || *fp == "" || *id == "" || *token == "" || *out == "" {
+			return fmt.Errorf("-server, -ca-sha256, -id, -token and -out are required")
+		}
+		if _, err := os.Stat(*out); err == nil {
+			return fmt.Errorf("%s already exists", *out)
+		}
+		key, request, err := core.NewEnrollment(*id)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		cert, ca, err := agent.Join(ctx, *server, *fp, *token, request)
+		if err != nil {
+			return err
+		}
+		cred, err := core.CompleteEnrollment(*server, ca, cert, key)
+		if err != nil {
+			return err
+		}
+		data, err := json.MarshalIndent(cred, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := writeNew(*out, append(data, '\n')); err != nil {
+			return err
+		}
+		fmt.Printf("Enrolled %s. Private credential written to %s.\n", *id, *out)
 		return nil
 	case "version":
 		f := flags("version")

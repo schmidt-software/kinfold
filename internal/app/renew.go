@@ -214,3 +214,39 @@ func fetchAfterRenewal(ctx context.Context, cred core.Credential) (core.Config, 
 	}
 	return core.Config{}, "", fmt.Errorf("controller did not accept the renewed certificate: %w", lastErr)
 }
+
+// controllerEnroller consumes enrollment tokens on the controller under the
+// state lock (D-024).
+func controllerEnroller(dir string, now func() time.Time) relay.Enroller {
+	return func(token string, request []byte) (string, []byte, error) {
+		s, lock, err := loadWritableState(dir)
+		if errors.Is(err, core.ErrStateLocked) {
+			return "", nil, relay.ErrBusy
+		}
+		if err != nil {
+			return "", nil, fmt.Errorf("load state: %w", err)
+		}
+		defer lock.Close()
+		id, cert, err := s.EnrollWithToken(token, request, now())
+		if err != nil {
+			return "", nil, err
+		}
+		if err := core.WriteJSON(filepath.Join(dir, "state.json"), s); err != nil {
+			return "", nil, fmt.Errorf("persist enrollment: %w", err)
+		}
+		return id, cert, nil
+	}
+}
+
+// caFingerprint returns the SHA-256 fingerprint of the controller CA.
+func caFingerprint(s *core.State) (string, error) {
+	block, _ := pem.Decode(s.CA)
+	if block == nil {
+		return "", fmt.Errorf("invalid CA certificate")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", err
+	}
+	return core.Fingerprint(cert), nil
+}
