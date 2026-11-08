@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -33,6 +34,9 @@ func TestCheckConfig(t *testing.T) {
 	defer server.Close()
 
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	statePath := filepath.Join(dir, "state.json")
 	credentialPath := filepath.Join(dir, "credential.json")
 	if err := core.WriteJSON(statePath, state); err != nil {

@@ -44,7 +44,7 @@ func TestDistinctCertificatesCannotSharePeerKey(t *testing.T) {
 	if err := state.Config.Validate(); err == nil || !strings.Contains(err.Error(), "public key") {
 		t.Fatalf("configuration accepted shared peer key: %v", err)
 	}
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	if err := WriteJSON(filepath.Join(dir, "state.json"), state); err != nil {
 		t.Fatal(err)
 	}

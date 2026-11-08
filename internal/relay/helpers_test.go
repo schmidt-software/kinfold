@@ -3,6 +3,7 @@ package relay
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/schmidt-software/kinfold/internal/core"
@@ -39,4 +40,15 @@ func relayRequest(t *testing.T, cfg core.Config) *http.Request {
 	r := httptest.NewRequest(http.MethodConnect, "/relay", nil)
 	r.Header.Set("X-Kinfold-Config-Revision", revision)
 	return r
+}
+
+// privateTempDir returns a temporary directory with mode 0700 so the state
+// permission check accepts it.
+func privateTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
