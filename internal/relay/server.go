@@ -370,9 +370,14 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		return
 	}
 	s.mu.Lock()
-	if !s.available || s.generation != generation {
+	// The 200 response was written without the lock. Meanwhile the
+	// configuration may have changed, or a newer connection of the same
+	// device may have superseded this one; then it must not become the
+	// waiter (change review finding 3).
+	_, stillActive := s.active[conn]
+	if !s.available || s.generation != generation || !stillActive {
 		s.mu.Unlock()
-		conn.Close()
+		forceClose(conn)
 		s.forget(conn)
 		return
 	}
@@ -384,8 +389,19 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 		return
 	}
 	p := &pending{from: from, conn: conn, match: make(chan net.Conn, 1), cancel: make(chan struct{})}
+	var replaced net.Conn
+	if old := s.waiting[key]; old != nil {
+		// Never overwrite a waiter without releasing it; its goroutine would
+		// otherwise wait forever.
+		close(old.cancel)
+		delete(s.active, old.conn)
+		replaced = old.conn
+	}
 	s.waiting[key] = p
 	s.mu.Unlock()
+	if replaced != nil {
+		forceClose(replaced)
+	}
 	timer := time.NewTimer(s.pairingTimeout)
 	defer timer.Stop()
 	select {

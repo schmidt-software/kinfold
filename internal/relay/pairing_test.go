@@ -145,3 +145,73 @@ func TestPairedEndpointsBridgeAndRelease(t *testing.T) {
 		t.Fatalf("bridged endpoints not released: active=%d waiting=%d", active, waiting)
 	}
 }
+
+// gatedConn delays its first write until the gate opens, then reports
+// success, like a slow but healthy client socket.
+type gatedConn struct {
+	net.Conn
+	gate chan struct{}
+}
+
+func (c *gatedConn) Write(p []byte) (int, error) {
+	<-c.gate
+	return len(p), nil
+}
+
+func (c *gatedConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *gatedConn) SetDeadline(time.Time) error      { return nil }
+
+func TestSupersededConnectionDoesNotBecomeWaiter(t *testing.T) {
+	cfg := pairConfig(t)
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	left1, right1 := net.Pipe()
+	defer right1.Close()
+	slow := &gatedConn{Conn: left1, gate: make(chan struct{})}
+	done1 := make(chan struct{})
+	go func() {
+		s.connect(&blockingHijacker{conn: slow, header: make(http.Header)}, relayRequest(t, cfg), "alice", "bob", 0)
+		close(done1)
+	}()
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			s.mu.Lock()
+			ok := cond()
+			s.mu.Unlock()
+			if ok {
+				return
+			}
+		}
+		t.Fatalf("timed out waiting for %s", what)
+	}
+	waitFor("first connection registered", func() bool { return len(s.active) == 1 })
+	left2, right2 := net.Pipe()
+	defer right2.Close()
+	done2 := make(chan struct{})
+	go func() {
+		s.connect(&blockingHijacker{conn: left2, header: make(http.Header)}, relayRequest(t, cfg), "alice", "bob", 0)
+		close(done2)
+	}()
+	reader := bufio.NewReader(right2)
+	if line, err := reader.ReadString('\n'); err != nil || !strings.Contains(line, "200") {
+		t.Fatalf("second connection: %q %v", line, err)
+	}
+	key := "alice\x00bob"
+	waitFor("second connection waiting", func() bool { p := s.waiting[key]; return p != nil && p.conn == left2 })
+	close(slow.gate) // the superseded first connection now reaches the second lock
+	select {
+	case <-done1:
+	case <-time.After(2 * time.Second):
+		t.Fatal("superseded connection did not give up")
+	}
+	s.mu.Lock()
+	p := s.waiting[key]
+	s.mu.Unlock()
+	if p == nil || p.conn != left2 {
+		t.Fatal("superseded connection replaced the live waiter")
+	}
+}
