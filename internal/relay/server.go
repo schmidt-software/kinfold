@@ -58,6 +58,10 @@ type Server struct {
 	signer         ed25519.PrivateKey      // signs /config responses (D-025)
 	endpoints      map[string]registration // direct-path endpoints by peer ID (D-026)
 	lastIssued     time.Time               // issue times only increase within a process
+	state          *core.State             // latest state, served to replicas (D-028)
+	replicas       map[string]string       // replica certificate fingerprint -> replica ID
+	controllers    []string                // controller addresses signed into configurations
+	standby        bool                    // read-only standby: no renewal or enrollment
 	lease          time.Duration
 	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
 	renewInterval  time.Duration
@@ -122,7 +126,46 @@ func NewForState(state *core.State) (*Server, error) {
 		return nil, fmt.Errorf("configuration signing key: %w", err)
 	}
 	s.SetConfigSigner(key, core.DefaultLease)
+	s.setState(state)
 	return s, nil
+}
+
+// SetStandby makes the relay a read-only standby (D-028): it serves signed
+// configuration and relays sessions, but refuses renewal and enrollment and
+// does not replicate further.
+func (s *Server) SetStandby() { s.standby = true }
+
+// setState records the state behind the configuration: replicas, the
+// controller list for devices and the copy served to replicas.
+func (s *Server) setState(state *core.State) {
+	replicas := map[string]string{}
+	for _, r := range state.Replicas {
+		if cert, err := core.ParseCert(r.Cert); err == nil {
+			replicas[core.Fingerprint(cert)] = r.ID
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state, s.replicas, s.controllers = state, replicas, state.Controllers()
+}
+
+// UpdateState applies a reloaded controller state.
+func (s *Server) UpdateState(state *core.State, err error) error {
+	if err != nil {
+		return s.Update(core.Config{}, err)
+	}
+	if err := s.Update(state.Config, nil); err != nil {
+		return err
+	}
+	s.setState(state)
+	return nil
+}
+
+// marked answers 503 with a header telling devices that this is not a
+// verdict on their authorization (they keep their grace period).
+func (s *Server) marked(w http.ResponseWriter, header, message string) {
+	w.Header().Set(header, "1")
+	s.reject(w, message, http.StatusServiceUnavailable)
 }
 
 // view is the configuration one device receives and its revision, which the
@@ -363,14 +406,13 @@ func (s *Server) Watch(done <-chan struct{}, initial *core.State, load func() (*
 			return
 		case <-ticker.C:
 			next, err := load()
-			if err == nil && (!bytes.Equal(initial.CA, next.CA) || !bytes.Equal(initial.CAKey, next.CAKey) || !bytes.Equal(initial.ServerCert, next.ServerCert) || !bytes.Equal(initial.ServerKey, next.ServerKey)) {
+			// A standby presents its own server certificate, so only the CA
+			// must stay the same there.
+			serverChanged := !s.standby && err == nil && (!bytes.Equal(initial.ServerCert, next.ServerCert) || !bytes.Equal(initial.ServerKey, next.ServerKey))
+			if err == nil && (!bytes.Equal(initial.CA, next.CA) || !bytes.Equal(initial.CAKey, next.CAKey) || serverChanged) {
 				err = fmt.Errorf("controller TLS identity changed; restart required")
 			}
-			var cfg core.Config
-			if err == nil {
-				cfg = next.Config
-			}
-			if err = s.Update(cfg, err); err != nil {
+			if err = s.UpdateState(next, err); err != nil {
 				if !failed {
 					slog.Error("controller configuration unavailable; relay closed", "error", err)
 				}
@@ -389,7 +431,13 @@ func (s *Server) Watch(done <-chan struct{}, initial *core.State, load func() (*
 // the token. Client certificates are verified when given; every endpoint
 // except POST /enroll requires one (D-024).
 func TLSConfig(s *core.State) (*tls.Config, error) {
-	cert, err := tls.X509KeyPair(s.ServerCert, s.ServerKey)
+	return TLSConfigWithServer(s, s.ServerCert, s.ServerKey)
+}
+
+// TLSConfigWithServer is TLSConfig with a different server certificate, as
+// a standby controller presents its own (D-028).
+func TLSConfigWithServer(s *core.State, serverCert, serverKey []byte) (*tls.Config, error) {
+	cert, err := tls.X509KeyPair(serverCert, serverKey)
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +466,28 @@ type Enroller func(token string, request []byte) (string, []byte, error)
 // refuse unsigned configuration.
 func (s *Server) SetConfigSigner(key ed25519.PrivateKey, lease time.Duration) {
 	s.signer, s.lease = key, lease
+}
+
+// handleReplica serves the full state to a registered replica. The state
+// contains the CA and signing keys: only a client certificate registered as
+// replica, verified against the CA by TLS, gets it.
+func (s *Server) handleReplica(w http.ResponseWriter, r *http.Request) {
+	if s.standby || r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		s.reject(w, "not authorized", http.StatusForbidden)
+		return
+	}
+	s.mu.Lock()
+	id, ok := s.replicas[core.Fingerprint(r.TLS.PeerCertificates[0])]
+	state := s.state
+	s.mu.Unlock()
+	if !ok || state == nil {
+		s.reject(w, "not authorized", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(state); err != nil {
+		slog.Warn("replica state response failed", "replica", id, "error", err)
+	}
 }
 
 // SetEnroller enables POST /enroll. It must be called before serving.
@@ -502,7 +572,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/enroll" && (r.TLS == nil || len(r.TLS.PeerCertificates) == 0) {
+		if s.standby {
+			s.marked(w, "X-Kinfold-Standby", "standby controller: enroll at the primary")
+			return
+		}
 		s.handleEnroll(w, r)
+		return
+	}
+	if r.Method == http.MethodGet && r.URL.Path == "/replica/state" {
+		s.handleReplica(w, r)
 		return
 	}
 	id, ok := identity(r, members)
@@ -510,7 +588,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// A device whose renewal response was lost presents its previous,
 		// CA-signed certificate; the renewer decides whether it may collect
 		// the certificate that was already issued (D-018).
-		if r.Method == http.MethodPost && r.URL.Path == "/renew" && s.renew != nil && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		if r.Method == http.MethodPost && r.URL.Path == "/renew" && s.renew != nil && !s.standby && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 			s.handleRenew(w, r, "")
 			return
 		}
@@ -534,8 +612,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			issued = s.lastIssued.Add(time.Microsecond)
 		}
 		s.lastIssued = issued
+		controllers := s.controllers
 		s.mu.Unlock()
-		env, err := core.SignConfig(s.signer, id, views[id].config, endpoints, issued, s.lease)
+		env, err := core.SignConfig(s.signer, id, views[id].config, endpoints, controllers, issued, s.lease)
 		if err != nil {
 			slog.Error("signing configuration failed", "error", err)
 			s.reject(w, "configuration unavailable", http.StatusInternalServerError)
@@ -555,6 +634,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ConfigKey []byte `json:"config_key"`
 		}{s.signer.Public().(ed25519.PublicKey)})
 	case r.Method == http.MethodPost && r.URL.Path == "/renew":
+		if s.standby {
+			s.marked(w, "X-Kinfold-Standby", "standby controller: renew at the primary")
+			return
+		}
 		s.handleRenew(w, r, id)
 	case r.Method == http.MethodConnect && r.URL.Path == "/relay":
 		target := r.URL.Query().Get("peer")
