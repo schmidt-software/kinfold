@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,9 +56,36 @@ func TestUpdateInvalidatesAndFailsClosed(t *testing.T) {
 }
 
 func TestRejectClosesConnection(t *testing.T) {
+	s, err := New(pairConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec := httptest.NewRecorder()
-	reject(rec, "not authorized", http.StatusForbidden)
+	s.reject(rec, "not authorized", http.StatusForbidden)
 	if rec.Code != http.StatusForbidden || rec.Header().Get("Connection") != "close" {
 		t.Fatalf("status %d, Connection %q", rec.Code, rec.Header().Get("Connection"))
+	}
+}
+
+func TestRelayMetrics(t *testing.T) {
+	cfg := pairConfig(t)
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rec := httptest.NewRecorder()
+	s.reject(rec, "x", http.StatusForbidden)
+	if err := s.Update(cfg, nil); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := s.Metrics().WritePrometheus(&out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`kinfold_relay_rejections_total{status="403"} 1`, `kinfold_config_reloads_total{result="unchanged"} 1`, "kinfold_peers 2", "kinfold_config_available 1", "kinfold_relay_endpoints 0"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("metrics missing %q:\n%s", want, out.String())
+		}
 	}
 }

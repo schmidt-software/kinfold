@@ -24,6 +24,9 @@ type ListenerLimits struct {
 	// may open at once before the rate applies. It must be at least 1 when
 	// RatePerSource is set.
 	BurstPerSource int
+	// OnReject, if set, is called for every connection closed because of a
+	// per-source limit.
+	OnReject func()
 }
 
 // DefaultListenerLimits fits the 32-device mesh: a client holds one control
@@ -96,6 +99,9 @@ func (l *limitedListener) Accept() (net.Conn, error) {
 		}
 		source := remoteIP(conn)
 		if !l.admit(source) {
+			if l.limits.OnReject != nil {
+				l.limits.OnReject()
+			}
 			conn.Close()
 			<-l.slots
 			continue
