@@ -174,6 +174,9 @@ func Run(args []string) error {
 		if *path == "" {
 			return fmt.Errorf("-credential is required")
 		}
+		if err := core.CheckPrivate(*path); err != nil {
+			return err
+		}
 		local, err := core.LoadState(*dir)
 		if err != nil {
 			return err
@@ -465,6 +468,9 @@ func Run(args []string) error {
 		if *server == "" || *keyPath == "" || *certPath == "" || *caPath == "" || *out == "" {
 			return fmt.Errorf("-server, -key, -cert, -ca and -out are required")
 		}
+		if err := core.CheckPrivate(*keyPath); err != nil {
+			return err
+		}
 		key, err := readEnrollmentFile(*keyPath)
 		if err != nil {
 			return err
@@ -665,6 +671,9 @@ func Run(args []string) error {
 			if err := logging.configure(); err != nil {
 				return err
 			}
+		}
+		if err := core.CheckPrivate(*path); err != nil {
+			return err
 		}
 		var cred core.Credential
 		if err := core.ReadJSON(*path, &cred); err != nil {

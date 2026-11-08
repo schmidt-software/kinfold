@@ -15,7 +15,7 @@ func TestMissingActiveKeyIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.UsedPeerKeys = []string{strings.Repeat("a", 64)}
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	if err := WriteJSON(filepath.Join(dir, "state.json"), state); err != nil {
 		t.Fatal(err)
 	}

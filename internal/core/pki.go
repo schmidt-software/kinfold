@@ -225,8 +225,14 @@ func LoadStateForOfflineMaintenance(dir string) (*State, error) {
 }
 
 func loadState(dir string, renewServer bool) (*State, error) {
+	path := filepath.Join(dir, "state.json")
+	for _, p := range []string{dir, path} {
+		if err := CheckPrivate(p); err != nil {
+			return nil, err
+		}
+	}
 	var s State
-	if err := ReadJSON(filepath.Join(dir, "state.json"), &s); err != nil {
+	if err := ReadJSON(path, &s); err != nil {
 		return nil, err
 	}
 	if err := s.Config.Validate(); err != nil {

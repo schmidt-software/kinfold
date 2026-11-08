@@ -33,7 +33,7 @@ func TestLoadStateValidatesControllerPKI(t *testing.T) {
 		{"invalid port", func(s *State) { s.Server = "localhost:0" }, "invalid controller port"},
 		{"foreign peer", func(s *State) { s.Config.Peers[0].Cert = other.Config.Peers[0].Cert; s.UsedPeerKeys = nil }, "not signed by the controller CA"},
 	}
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	path := filepath.Join(dir, "state.json")
 	if err := WriteJSON(path, state); err != nil {
 		t.Fatal(err)

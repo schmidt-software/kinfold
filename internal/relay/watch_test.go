@@ -10,7 +10,7 @@ import (
 )
 
 func TestWatchFailsClosedOnInvalidPKIAndRecovers(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	state, err := core.NewState("localhost:8443", "10.77.0.0/24")
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestWatchFailsClosedOnInvalidPKIAndRecovers(t *testing.T) {
 }
 
 func TestWatchClosesRelayWhenTLSIdentityChanges(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	state, err := core.NewState("localhost:8443", "10.77.0.0/24")
 	if err != nil {
 		t.Fatal(err)
