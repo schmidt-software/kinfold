@@ -27,6 +27,7 @@ type link struct {
 	// dial reports whether this side dials the peer directly.
 	dial      bool
 	endpoints func(peer string) []string
+	server    func() string // current controller for relay connections
 	// queue is the send queue of the running session; only that session
 	// reads it. outbox points to the same channel while a session is
 	// connected and is nil otherwise. Each session gets a fresh channel, so
@@ -156,7 +157,7 @@ func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, 
 			}
 			ip, _ := netip.ParseAddr(p.IP)
 			peerIPv6, _ := netip.ParseAddr(p.IPv6)
-			l := &link{peer: p, incoming: make(chan net.Conn, 1), endpoints: o.endpoints, allowIncoming: allowIncoming, allowOutgoing: allowOutgoing, localIPv6: localIPv6, peerIPv6: peerIPv6}
+			l := &link{peer: p, incoming: make(chan net.Conn, 1), endpoints: o.endpoints, server: o.server, allowIncoming: allowIncoming, allowOutgoing: allowOutgoing, localIPv6: localIPv6, peerIPv6: peerIPv6}
 			// Only one side dials directly, so the two devices never build
 			// two sessions: the side without a listener, or the lower ID.
 			l.dial = o.endpoints != nil && (o.listenAddr == "" || ownID < p.ID)
@@ -398,8 +399,13 @@ func (l *link) connect(ctx context.Context, cred core.Credential, cfg *atomic.Po
 	}
 	relayed := make(chan result, 1)
 	go func() {
-		// Reconnects present the revision of the configuration in force now.
-		conn, err := Connect(relayCtx, cred, *cfg.Load(), ownID, l.peer)
+		// Reconnects present the revision of the configuration in force now,
+		// through the controller that answered last.
+		c := cred
+		if l.server != nil {
+			c.Server = l.server()
+		}
+		conn, err := Connect(relayCtx, c, *cfg.Load(), ownID, l.peer)
 		relayed <- result{conn, err}
 	}()
 	select {
