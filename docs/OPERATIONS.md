@@ -1,0 +1,146 @@
+# Operator guide
+
+This guide covers running a Kinfold network day to day. Paths follow the
+systemd units in `packaging/systemd/`: controller state in
+`/var/lib/kinfold-controller/state`, client credentials in
+`/var/lib/kinfold-client/<name>/credential.json`. Run controller commands as
+the `kinfold` user (`sudo -u kinfold kinfold …`).
+
+## What is where
+
+| Item | Location | Secret | Notes |
+| --- | --- | --- | --- |
+| CA certificate + **CA private key** | controller `state.json` | **yes** | Whoever holds it can admit devices. |
+| Controller certificate + key | controller `state.json` | yes | Renew yearly (`renew-server`). |
+| Member list, addresses, rules, key history | controller `state.json` | no (integrity matters) | Changed only through the CLI and renewals. |
+| Device key + certificate | device `credential.json` | **yes** | Renewed automatically by `run`. |
+
+The controller refuses to read its state and the client refuses to read its
+credential when they are accessible by group or others.
+
+## Upgrades
+
+Kinfold uses strict decoders: a newer binary may write fields an older one
+rejects, and the relay protocol may change between versions (as with the
+rename in v0.2). Always upgrade **the controller and all clients together**:
+
+1. Read the release notes for compatibility remarks.
+2. Verify the release (`SHA256SUMS`, or rebuild with `scripts/release.sh`).
+3. Back up the controller state (below).
+4. Stop clients, replace the controller binary, restart the controller,
+   replace client binaries, start clients.
+
+## Backup and restore
+
+Back up the whole state directory while no administrative command runs, for
+example with the controller stopped or under the state lock:
+
+```sh
+sudo -u kinfold flock /var/lib/kinfold-controller/state \
+  tar -C /var/lib/kinfold-controller -czf - state | gpg --encrypt -r ops@example.com > kinfold-state-$(date +%F).tar.gz.gpg
+```
+
+Store backups encrypted; they contain the CA private key.
+
+**Restoring an older backup rolls back authorization.** The state has no
+rollback protection (see `SECURITY-MODEL.md`). After restoring:
+
+- Devices removed after the backup are authorized again: remove them again
+  with `remove-peer`.
+- Devices whose certificate was renewed or rotated after the backup are
+  rejected (their current certificate is not in the restored state):
+  re-enroll them with `keygen` / `approve` / `enroll` or `rotate-peer`.
+- Key fingerprints recorded after the backup are lost, so a key removed in
+  that period could be approved again. Check new requests carefully.
+
+Restore with the controller stopped, keep mode `0700` on the directory and
+`0600` on `state.json`, then start the controller and check the startup log
+for certificate warnings.
+
+## Certificate lifetimes
+
+| Certificate | Lifetime | Renewal |
+| --- | --- | --- |
+| CA | 10 years | Manual CA rotation (below). Plan it at least a year ahead. |
+| Controller | 1 year, at most until CA expiry | `renew-server`, then restart the controller. |
+| Device | 1 year, at most until CA expiry | Automatic in `run` once < 1/3 remains; `kinfold renew` once. |
+
+`serve` logs a warning at startup for every certificate that is expired or
+expires within 30 days. Device renewals are logged on both sides
+(`device certificate renewed`).
+
+## Moving the controller to a new address
+
+The controller host name is part of its certificate and of every device
+credential. To move:
+
+```sh
+sudo systemctl stop kinfold-controller
+sudo -u kinfold kinfold renew-server -data /var/lib/kinfold-controller/state -server vpn2.example.com:8443
+sudo systemctl start kinfold-controller
+```
+
+Then set `"server": "vpn2.example.com:8443"` in every device credential and
+restart its client. CA, device certificates and keys are unchanged. Devices
+cannot connect between the controller restart and their credential update.
+
+## CA rotation
+
+There is no automated CA rotation in this version. Rotating the CA means
+building a new network and moving devices over:
+
+1. Initialise a new controller state with the same network settings on a
+   new port or host: `kinfold init -data state-new -server vpn.example.com:9443`.
+2. Recreate the rules (`allow`, `service-*`, `ipv6-*`) in the new state.
+3. For each device: `keygen` on the device, `approve` against the new state,
+   `export-ca`, `enroll` on the device into a new credential file, verifying
+   fingerprints out of band as for a first enrollment.
+4. Run the new controller next to the old one; switch each device's client
+   to the new credential (one systemd instance per credential makes this a
+   matter of starting a new instance and stopping the old one).
+5. When all devices have moved, stop the old controller and destroy its
+   state and backups securely.
+
+Device IP addresses can stay the same as long as a device does not run both
+clients at once.
+
+## Incident response
+
+**Lost or stolen device**
+
+1. `remove-peer -id <device>` — the relay rejects the device within about a
+   second and closes its sessions.
+2. If the device should return later, re-enroll it with a new key; its old
+   key can never be approved again (key history).
+
+**Device credential copied (device still in your hands)**
+
+Remove and re-enroll as above. If the thief renewed the certificate first,
+the legitimate device is already locked out (`not authorized` in its log),
+which is a signal of theft.
+
+**Controller host compromised**
+
+Assume the CA key is known to the attacker. The attacker can admit devices
+and impersonate any member. Treat the network as untrusted until a CA
+rotation (above) on a clean host is complete; do not restore backups taken
+after the suspected compromise.
+
+**Controller unreachable**
+
+Clients keep their tunnel for 30 seconds, then close it and reconnect as
+soon as the controller answers. No data flows while the controller is down,
+because all traffic passes through its relay.
+
+## Monitoring
+
+Useful log messages (`-log-format json` makes them machine-readable):
+
+| Component | Message | Meaning |
+| --- | --- | --- |
+| controller | `controller configuration unavailable; relay closed` | State invalid or unreadable; all sessions closed until fixed. |
+| controller | `certificate … expires on …` / `expired on …` | Renew before it lapses. |
+| controller | `certificate renewal rejected` | A device asked for renewal with an invalid request. |
+| client | `controller unreachable beyond grace period; tunnel closed` | Control path down for > 30 s. |
+| client | `certificate renewal failed; will retry` | Renewal will be retried every 10 minutes. |
+| client | `peer disconnected` (repeated) | Path problems to that peer; sessions reconnect with backoff. |

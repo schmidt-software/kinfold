@@ -339,3 +339,19 @@ address.
 **Consequences:** IPv6 DAD cannot be disabled under the client unit
 (`ProtectKernelTunables`); accepted, see README. Instance names are limited
 to 12 characters by the interface name `kf-<name>`.
+
+## D-017 — 2026-11-08 — active — Controller address change and manual CA rotation
+
+**Decision:** `renew-server -server host:port` moves the controller to a new
+address by issuing a new server certificate under the existing CA; device
+certificates stay valid and devices only update the `server` field of their
+credential. CA rotation remains a documented manual procedure (new state,
+re-enrollment of every device, parallel operation, cut-over) in
+`docs/OPERATIONS.md`.
+
+**Rationale:** Writing the operator guide showed that a DNS move required a
+complete re-setup with re-enrollment of every device, although nothing
+about the device trust changes. Automating CA rotation, by contrast, needs a
+verifiable trust transition (two CAs trusted in parallel, signed hand-over),
+which belongs with signed configuration (#22) and is out of alpha scope
+(D-003).
