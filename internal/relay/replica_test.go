@@ -5,9 +5,11 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestReplicaStateAndStandby(t *testing.T) {
@@ -85,5 +87,31 @@ func TestReplicaStateAndStandby(t *testing.T) {
 	standby.SetStale(false)
 	if rec := config(); rec.Code != http.StatusOK {
 		t.Fatalf("standby config after recovery: %d", rec.Code)
+	}
+}
+
+func TestStaleStandbyClosesOpenSessions(t *testing.T) {
+	state := threePeerState(t)
+	s, err := NewForState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetStandby()
+	ab, abPeer := net.Pipe()
+	defer abPeer.Close()
+	s.mu.Lock()
+	s.active[ab] = endpoint{from: "alice", to: "bob"}
+	s.mu.Unlock()
+	s.SetStale(true)
+	s.mu.Lock()
+	open := len(s.active)
+	s.mu.Unlock()
+	if open != 0 {
+		t.Fatal("a session relayed before the standby went stale survived")
+	}
+	abPeer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := abPeer.Read(make([]byte, 1)); err == nil {
+		t.Fatal("the session's connection is still open")
 	}
 }
