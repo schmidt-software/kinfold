@@ -37,11 +37,12 @@ jobs:
         run: go test -race -count=1 ./...
 
   build:
-    name: Cross-compile
+    name: Cross-compile ${{ matrix.goos }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       matrix:
+        goos: [linux, darwin]
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -49,9 +50,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: build linux/${{ matrix.goarch }}
+      - name: build ${{ matrix.goos }}/${{ matrix.goarch }}
         env:
-          GOOS: linux
+          GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: go build -trimpath -o /dev/null .
