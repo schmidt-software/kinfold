@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -447,11 +448,19 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := writeNew(*out, cert); err != nil {
+		// The state is written first, so a certificate never exists outside
+		// the member list. The certificate is public: if it cannot be
+		// written, it is printed instead of being lost (the key is then
+		// recorded in the key history and cannot be approved again).
+		if err := checkNewOutput(*out); err != nil {
 			return err
 		}
 		if err := core.WriteJSON(filepath.Join(*dir, "state.json"), s); err != nil {
-			return fmt.Errorf("certificate written to %s; controller state update failed or its durability is uncertain: %w", *out, err)
+			return fmt.Errorf("controller state update failed or its durability is uncertain: %w", err)
+		}
+		if err := writeNew(*out, cert); err != nil {
+			fmt.Printf("%s", cert)
+			return fmt.Errorf("controller state updated, but %w; the certificate is printed above", err)
 		}
 		fmt.Printf("Updated %s. Transfer %s back securely; controller and current clients reload asynchronously.\n", *id, *out)
 		return nil
@@ -569,11 +578,14 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := writeNew(*out, append(data, '\n')); err != nil {
+		if err := checkNewOutput(*out); err != nil {
 			return err
 		}
 		if err := core.WriteJSON(filepath.Join(*dir, "state.json"), s); err != nil {
-			return fmt.Errorf("credential written to %s; controller state update failed or its durability is uncertain: %w", *out, err)
+			return fmt.Errorf("controller state update failed or its durability is uncertain: %w", err)
+		}
+		if err := writeNew(*out, append(data, '\n')); err != nil {
+			return fmt.Errorf("%s is authorized, but %w; run remove-peer -id %s and add it again", *id, err, *id)
 		}
 		fmt.Printf("Authorized %s. Transfer %s securely; updated clients reload asynchronously.\n", *id, *out)
 		return nil
@@ -1046,11 +1058,14 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := writeNew(*out, append(data, '\n')); err != nil {
+		if err := checkNewOutput(*out); err != nil {
 			return err
 		}
 		if err := core.WriteJSON(filepath.Join(*dir, "state.json"), s); err != nil {
-			return fmt.Errorf("replica credential written to %s; controller state update failed: %w", *out, err)
+			return fmt.Errorf("controller state update failed: %w", err)
+		}
+		if err := writeNew(*out, append(data, '\n')); err != nil {
+			return fmt.Errorf("standby %s is registered, but %w; run replica-remove -id %s and add it again", *id, err, *id)
 		}
 		fmt.Printf("Added standby %s at %s. Transfer %s securely to the standby host; it receives a full copy of the controller state, including the CA key.\n", *id, *address, *out)
 		return nil
@@ -1165,6 +1180,24 @@ func readEnrollmentFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("enrollment file %s exceeds %d bytes", path, maxEnrollmentFileSize)
 	}
 	return data, nil
+}
+
+// checkNewOutput catches the common reasons writeNew would fail (existing
+// file, missing directory) before the controller state is changed.
+func checkNewOutput(path string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("%s already exists", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	info, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("output directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("output directory %s is not a directory", filepath.Dir(path))
+	}
+	return nil
 }
 
 func writeNew(path string, data []byte) error {
