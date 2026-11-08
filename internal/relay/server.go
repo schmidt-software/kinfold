@@ -406,7 +406,9 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	source := "enroll:" + host
+	// Throttle per IPv4 address or IPv6 /64, like the listener limits
+	// (v0.3 review finding 1).
+	source := "enroll:" + sourceKey(host)
 	if s.renewalBlocked(source) {
 		w.Header().Set("Retry-After", "30")
 		s.reject(w, "enrollment recently failed; retry later", http.StatusTooManyRequests)
@@ -421,6 +423,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	id, cert, err := s.enroll(req.Token, req.Request)
 	switch {
 	case errors.Is(err, ErrBusy):
+		s.noteRenewalFailure(source) // unauthenticated callers must not keep the lock busy
 		w.Header().Set("Retry-After", "5")
 		s.reject(w, "controller busy; retry later", http.StatusServiceUnavailable)
 		return
