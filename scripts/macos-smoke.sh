@@ -39,6 +39,9 @@ GOOS=linux GOARCH="$arch" go build -o "$work/kinfold-linux" .
 "$work/kinfold" add-peer -data "$work/state" -id linux -ip 10.88.0.2 -out "$work/linux.json" >/dev/null
 "$work/kinfold" allow -data "$work/state" -from mac -to linux >/dev/null
 "$work/kinfold" allow -data "$work/state" -from linux -to mac >/dev/null
+"$work/kinfold" ipv6-network -data "$work/state" -network fd88::/64 >/dev/null
+"$work/kinfold" ipv6-assign -data "$work/state" -id mac -ip fd88::1 >/dev/null
+"$work/kinfold" ipv6-assign -data "$work/state" -id linux -ip fd88::2 >/dev/null
 
 "$work/kinfold" serve -data "$work/state" -listen ":$port" >"$work/controller.log" 2>&1 &
 controller_pid=$!
@@ -66,4 +69,12 @@ if [ "$ok" != true ]; then
   exit 1
 fi
 docker exec "$container" ping -c 2 -W 2 10.88.0.1 >/dev/null
-echo "macOS client on $iface reaches the Linux client and back through the tunnel: OK"
+echo "macOS client on $iface reaches the Linux client and back through the tunnel (IPv4): OK"
+if ! ping6 -c 2 fd88::2 >/dev/null 2>&1 || ! docker exec "$container" ping6 -c 2 -W 2 fd88::1 >/dev/null; then
+  echo "FAILED: no IPv6 ping between macOS (fd88::1) and Linux (fd88::2)" >&2
+  echo "--- macOS client"; cat "$work/mac.log"
+  ifconfig "$iface" || true
+  netstat -rn -f inet6 | grep -i "$iface" || true
+  exit 1
+fi
+echo "IPv6 through the tunnel in both directions: OK"
