@@ -4,7 +4,7 @@
 
 A **self-hostable IPv4/IPv6 overlay network** for small groups of Linux devices. A controller you run yourself admits devices explicitly, hands out fixed addresses and directional rules, and relays end-to-end encrypted sessions between them. Kinfold implements its own protocol and is not compatible with any other VPN or overlay product.
 
-> **Status: alpha (`v0.2.1-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor and a single point of failure; all traffic passes through its relay. See [Known limits](#known-limits).
+> **Status: alpha (`v0.3.0-alpha`).** The design is complete for its scope and has been reviewed and hardened, but it has **not been independently audited**. Use it for evaluation and non-critical networks, not to protect confidential data. The controller is a complete trust anchor and a single point of failure; all traffic passes through its relay. See [Known limits](#known-limits).
 
 ## Features
 
@@ -285,8 +285,8 @@ Even with an expired server certificate, `remove-peer` can remove devices from t
 Tagged versions (`v*`) are built by `.github/workflows/release.yml`: tests, then `scripts/release.sh`, which builds `linux/amd64`, `linux/arm64`, `darwin/amd64` and `darwin/arm64` binaries with `-trimpath`, without cgo and with an empty build ID, plus the systemd units and a `SHA256SUMS` file. The same commit and the Go toolchain pinned in `go.mod` produce bit-identical binaries, so a release can be verified by rebuilding it:
 
 ```sh
-git checkout v0.2.1-alpha
-scripts/release.sh v0.2.1-alpha /tmp/verify
+git checkout v0.3.0-alpha
+scripts/release.sh v0.3.0-alpha /tmp/verify
 diff /tmp/verify/SHA256SUMS SHA256SUMS   # from the release page
 ```
 
