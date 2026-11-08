@@ -52,6 +52,7 @@ Commands:
   token-list   List pending enrollment tokens
   token-revoke Revoke a pending enrollment token
   join         Enroll this device online with a token
+  seen-reset   Reset the configuration rollback watermark of a credential
   renew        Renew this device's certificate if it is due
   version      Show build information
 
@@ -746,7 +747,16 @@ func Run(args []string) error {
 				return err
 			}
 		}
-		cfg, id, err := agent.FetchConfig(ctx, cred)
+		var cfg core.Config
+		var id string
+		var err error
+		if args[0] == "run" {
+			// The configuration that starts the tunnel must respect the
+			// persisted rollback watermark too (v0.4 review finding 1).
+			cfg, id, err = fetchWithWatermark(ctx, *path, cred)
+		} else {
+			cfg, id, err = agent.FetchConfig(ctx, cred)
+		}
 		if err != nil {
 			return err
 		}
@@ -949,6 +959,23 @@ func Run(args []string) error {
 		}
 		os.Remove(joinPendingPath(*out))
 		fmt.Printf("Enrolled %s. Private credential written to %s.\n", *id, *out)
+		return nil
+	case "seen-reset":
+		f := flags("seen-reset")
+		path := f.String("credential", "", "credential whose configuration watermark to reset")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := noArgs(f); err != nil {
+			return err
+		}
+		if *path == "" {
+			return fmt.Errorf("-credential is required")
+		}
+		if err := os.Remove(seenPath(*path)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		fmt.Println("Configuration watermark removed. Only do this after the controller's clock was set back; the next run accepts the controller's current configuration as the new baseline.")
 		return nil
 	case "version":
 		f := flags("version")

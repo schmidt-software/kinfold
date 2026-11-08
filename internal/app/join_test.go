@@ -63,6 +63,9 @@ func TestJoinWithTokenEndToEnd(t *testing.T) {
 	if err := core.ReadJSON(out, &cred); err != nil {
 		t.Fatal(err)
 	}
+	if len(cred.ConfigKey) != 32 {
+		t.Fatal("token-enrolled credential lacks the configuration key")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if _, id, err := fetchAfterRenewal(ctx, cred); err != nil || id != "bob" {
@@ -104,7 +107,7 @@ func TestJoinResumesAfterLostResponse(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if _, _, err := agent.Join(ctx, alice.Server, fp, secret, request); err != nil {
+	if _, _, _, err := agent.Join(ctx, alice.Server, fp, secret, request); err != nil {
 		t.Fatalf("first request: %v", err)
 	} // response "lost"
 	if err := Run([]string{"join", "-server", alice.Server, "-ca-sha256", fp, "-id", "carol", "-token-file", "/nonexistent", "-out", out}); err != nil {

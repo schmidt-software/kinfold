@@ -279,7 +279,11 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 		}()
 		var runOpts []agent.Option
 		if direct.dial || direct.listen != "" {
-			runOpts = append(runOpts, agent.WithDirect(direct.listen, client.Endpoints))
+			var endpoints func(string) []string
+			if direct.dial { // -direct-dial=false: accept only (v0.4 review finding 7)
+				endpoints = client.Endpoints
+			}
+			runOpts = append(runOpts, agent.WithDirect(direct.listen, endpoints))
 		}
 		if direct.port > 0 {
 			client.SetDirect(direct.port, direct.addrs)
@@ -300,7 +304,7 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 				return err
 			}
 			cred = next
-			if cfg, id, err = fetchAfterRenewal(ctx, cred); err != nil {
+			if cfg, id, err = fetchAfterRenewalAt(ctx, path, cred); err != nil {
 				return err
 			}
 			slog.Info("restarting tunnel with renewed certificate", "peer", id)
