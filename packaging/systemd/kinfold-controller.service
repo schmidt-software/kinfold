@@ -2,6 +2,7 @@
 #
 # Install:
 #   useradd --system --home-dir /var/lib/kinfold-controller --shell /usr/sbin/nologin kinfold
+#   install -d -o kinfold -g kinfold -m 0700 /var/lib/kinfold-controller
 #   install -m 0755 kinfold /usr/local/bin/kinfold
 #   install -m 0644 kinfold-controller.service /etc/systemd/system/
 #   systemctl daemon-reload
