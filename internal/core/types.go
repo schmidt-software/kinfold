@@ -55,6 +55,10 @@ type Credential struct {
 	CA     []byte `json:"ca"`
 	Cert   []byte `json:"cert"`
 	Key    []byte `json:"key"`
+	// ConfigKey is the controller's Ed25519 public key for signed
+	// configuration (D-025). Credentials from before v0.4 lack it; the
+	// client then fetches it once over the authenticated connection.
+	ConfigKey []byte `json:"config_key,omitempty"`
 }
 
 var validID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
