@@ -115,8 +115,8 @@ func (s *State) RotatePeerEnrollment(id string, request []byte) ([]byte, error) 
 
 // CompleteEnrollment verifies both the private key and the explicitly trusted CA.
 func CompleteEnrollment(server string, ca, cert, key []byte) (Credential, error) {
-	if server == "" {
-		return Credential{}, fmt.Errorf("server is required")
+	if err := ValidateServerAddress(server); err != nil {
+		return Credential{}, err
 	}
 	pair, err := tls.X509KeyPair(cert, key)
 	if err != nil {

@@ -47,15 +47,24 @@ func certPEM(der []byte) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
-func NewState(address, network string) (*State, error) {
+// ValidateServerAddress checks a controller address as clients use it.
+func ValidateServerAddress(address string) error {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil || host == "" || port == "" {
-		return nil, fmt.Errorf("server must be a host:port address")
+		return fmt.Errorf("server must be a host:port address, got %q", address)
 	}
 	portNumber, err := strconv.Atoi(port)
 	if err != nil || portNumber < 1 || portNumber > 65535 {
-		return nil, fmt.Errorf("server port must be between 1 and 65535")
+		return fmt.Errorf("server port must be between 1 and 65535, got %q", port)
 	}
+	return nil
+}
+
+func NewState(address, network string) (*State, error) {
+	if err := ValidateServerAddress(address); err != nil {
+		return nil, err
+	}
+	host, _, _ := net.SplitHostPort(address)
 	cfg := Config{Network: network, Policy: &Policy{}}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
