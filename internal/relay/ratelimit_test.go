@@ -73,6 +73,16 @@ func TestRelayLimitThrottlesDevice(t *testing.T) {
 // A connection superseded while its bridge pauses must end the bridge at
 // once instead of after the pause (v0.6 review finding 4).
 func TestSupersedeEndsThrottledBridge(t *testing.T) {
+	testThrottledBridgeEnds(t, func(s *Server) []net.Conn { return s.supersede("alice", "bob") })
+}
+
+// Revocation and reloads close both sides of a bridge whose both directions
+// may be paused; the pauses must end too (fix review of #117).
+func TestInvalidateEndsThrottledBridge(t *testing.T) {
+	testThrottledBridgeEnds(t, func(s *Server) []net.Conn { return s.invalidate() })
+}
+
+func testThrottledBridgeEnds(t *testing.T, end func(*Server) []net.Conn) {
 	s, err := NewForState(threePeerState(t))
 	if err != nil {
 		t.Fatal(err)
@@ -90,11 +100,14 @@ func TestSupersedeEndsThrottledBridge(t *testing.T) {
 	ended := make(chan struct{})
 	go func() { s.bridgePair(aliceRelay, bobRelay, "alice"); close(ended) }()
 	go func() { _, _ = io.Copy(io.Discard, bobSide) }()
-	// 32 KiB at 1 B/s with a 16 KiB burst pauses for hours.
+	go func() { _, _ = io.Copy(io.Discard, aliceSide) }()
+	// 32 KiB at 1 B/s with a 16 KiB burst pauses for hours, in both
+	// directions.
 	go func() { _, _ = aliceSide.Write(make([]byte, 32<<10)) }()
+	go func() { _, _ = bobSide.Write(make([]byte, 32<<10)) }()
 	time.Sleep(200 * time.Millisecond)
 	s.mu.Lock()
-	stale := s.supersede("alice", "bob")
+	stale := end(s)
 	s.mu.Unlock()
 	forceClose(stale...)
 	select {
