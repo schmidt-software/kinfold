@@ -34,7 +34,7 @@ func TestServicePolicyBetweenAgents(t *testing.T) {
 	if err := state.Config.SetServiceRule("alice", "bob", "udp", 53, true); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.New(state.Config)
+	handler, err := relay.NewForState(state)
 	if err != nil {
 		t.Fatal(err)
 	}
