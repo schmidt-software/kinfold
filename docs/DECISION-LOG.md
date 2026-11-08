@@ -484,3 +484,23 @@ because it does not depend on it.
 **Consequences:** Three protocol-compatibility boundaries instead of one;
 each release notes its upgrade order. D-021 remains valid for the scope of
 each issue.
+
+## D-023 — 2026-11-08 — active — Per-device views and targeted invalidation
+
+**Decision:** The controller serves each device only its view of the
+configuration (itself, devices it has a rule with, those rules) and checks
+the revision of that view on relay connect. A configuration change closes
+only the relay sessions of pairs whose `PairSignature` (both certificates
+and addresses, IPv6 network, rules and service rules between them)
+changed. Clients apply changes that keep their own addresses to the running
+agent, which keeps unchanged peer sessions.
+
+**Rationale:** Review findings R-09/R-10 (#20): every change (including a
+certificate renewal, D-015) used to reset the whole mesh and every member
+learned the complete rule set. Per-device views make most changes invisible
+to unrelated devices, so they need no reaction at all.
+
+**Consequences:** The relay protocol changes (per-device revision); update
+controller and clients together. `check-config` compares the view of the
+credential's device. Revocation is unaffected: removing a device changes
+the signature of every pair it belongs to.
