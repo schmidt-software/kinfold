@@ -56,8 +56,17 @@ func TestDirectPathCarriesTrafficAndEndsOnRevocation(t *testing.T) {
 	if !waitDelivered(t, ta, tb, ipv4(1, 2), 8*time.Second) {
 		t.Fatal("no traffic between the agents")
 	}
-	if pathGauge("bob", "direct") != 1 || pathGauge("bob", "relay") != 0 {
-		t.Fatalf("alice reaches bob via direct=%d relay=%d, want the direct path", pathGauge("bob", "direct"), pathGauge("bob", "relay"))
+	// If bob's listener was not up yet when alice first dialed, alice starts
+	// on the relay and upgrades within a few seconds (first retry after 3 s).
+	upgrade := time.Now().Add(10 * time.Second)
+	for pathGauge("bob", "direct") != 1 || pathGauge("bob", "relay") != 0 {
+		if time.Now().After(upgrade) {
+			t.Fatalf("alice reaches bob via direct=%d relay=%d, want the direct path", pathGauge("bob", "direct"), pathGauge("bob", "relay"))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !waitDelivered(t, ta, tb, ipv4(1, 2), 8*time.Second) {
+		t.Fatal("no traffic over the direct path")
 	}
 
 	// Bob's configuration withdraws every rule with alice: bob drops the
