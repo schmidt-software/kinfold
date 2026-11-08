@@ -64,9 +64,11 @@ for certificate warnings.
 | CA | 10 years | Manual CA rotation (below). Plan it at least a year ahead. |
 | Controller | 1 year, at most until CA expiry | `renew-server`, then restart the controller. |
 | Device | 1 year, at most until CA expiry | Automatic in `run` once < 1/3 remains; `kinfold renew` once. |
+| Standby (replication and server) | 1 year, at most until CA expiry | `replica-remove` and `replica-add` on the primary, then restart the standby with the new credential. |
 
 `serve` logs a warning at startup for every certificate that is expired or
-expires within 30 days. Device renewals are logged on both sides
+expires within 30 days, including registered standbys; a standby also warns
+about its own credential. Device renewals are logged on both sides
 (`device certificate renewed`).
 
 ## Moving the controller to a new address
@@ -91,7 +93,14 @@ the standby host (see the README). Operational rules:
 
 - Run administrative commands on the primary only; the standby overwrites
   its state with the primary's every two seconds.
-- Monitor the standby's log for `replication from the primary failed`.
+- Monitor the standby's log for `replication from the primary failed` and
+  its metric `kinfold_standby_last_replication_timestamp_seconds`. A standby
+  that cannot replicate keeps serving its last state for `-standby-max-age`
+  (default `1h`), then answers devices with "standby state is stale" until
+  replication works again; a standby removed with `replica-remove` stops at
+  once. It starts from its stored state only when the primary is
+  unreachable and that state is younger than the maximum age. For a longer
+  primary outage, promote the standby (below) instead of raising the limit.
 - **Promotion** (primary lost): make sure the old primary cannot come back
   (power off, block its address), stop the standby and run
   `kinfold replica-promote -data /var/lib/kinfold-controller/state -standby standby.json`
@@ -188,6 +197,7 @@ Start the controller with `-metrics 127.0.0.1:9100` and clients with
 | `kinfold_relay_sessions_closed_total{reason}` | controller | `config_change`, `unavailable`, `superseded`. |
 | `kinfold_relay_rejections_total{status}`, `kinfold_listener_rejected_total` | controller | Rejected requests and connections over per-source limits. |
 | `kinfold_renewals_total` | controller | Device certificates issued by online renewal. |
+| `kinfold_standby_last_replication_timestamp_seconds` | standby | Last successful replication. Alert when older than a few minutes. |
 | `kinfold_controller_reachable` | client | 0 while config fetches fail; the tunnel closes after 30 s. |
 | `kinfold_peer_connected{peer}`, `kinfold_peer_bytes_total{peer,direction}` | client | Session state and traffic per peer. |
 | `kinfold_packets_dropped_total{reason}` | client | `mtu`, `invalid_source`, `no_route_or_policy`, `queue_full`, `inbound_policy`. |
@@ -202,6 +212,7 @@ Useful log messages (`-log-format json` makes them machine-readable):
 | controller | `controller configuration unavailable; relay closed` | State invalid or unreadable; all sessions closed until fixed. |
 | controller | `certificate … expires on …` / `expired on …` | Renew before it lapses. |
 | controller | `certificate renewal rejected` | A device asked for renewal with an invalid request. |
+| standby | `standby stopped serving devices` | Replication failed for longer than `-standby-max-age`, or the primary removed the standby. |
 | client | `controller unreachable beyond grace period; tunnel closed` | Control path down for > 30 s. |
 | client | `certificate renewal failed; will retry` | Renewal will be retried every 10 minutes. |
 | client | `peer disconnected` (repeated) | Path problems to that peer; sessions reconnect with backoff. |
