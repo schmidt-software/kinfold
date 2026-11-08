@@ -413,6 +413,9 @@ func (s *State) RenewServerCertificate() error {
 	return nil
 }
 
+// writeStateHook lets tests inject a failing state write into InitState.
+var writeStateHook = WriteJSON
+
 func InitState(dir, server, network string) error {
 	s, err := NewState(server, network)
 	if err != nil {
@@ -424,5 +427,11 @@ func InitState(dir, server, network string) error {
 	if err := SyncParentDir(dir); err != nil {
 		return fmt.Errorf("data directory %s created but its durability is uncertain: %w", dir, err)
 	}
-	return WriteJSON(filepath.Join(dir, "state.json"), s)
+	if err := writeStateHook(filepath.Join(dir, "state.json"), s); err != nil {
+		// Leave nothing behind that would make a retry fail (review C-07).
+		// Remove only succeeds for the empty directory created above.
+		os.Remove(dir)
+		return err
+	}
+	return nil
 }
