@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -653,6 +655,8 @@ func Run(args []string) error {
 		maxConns := f.Int("max-conns", relay.DefaultListenerLimits.Total, "maximum concurrent TCP connections")
 		maxPerIP := f.Int("max-conns-per-ip", relay.DefaultListenerLimits.PerSource, "maximum concurrent TCP connections per source IP (0 disables)")
 		ratePerIP := f.Float64("conn-rate-per-ip", relay.DefaultListenerLimits.RatePerSource, "new TCP connections per second per source IP (0 disables)")
+		relayRate := f.String("relay-rate", "0", "per-device relay bandwidth limit in bytes per second, with optional k/M/G suffix (0 disables)")
+		relayBurst := f.String("relay-burst", "", "per-device relay burst in bytes, with optional k/M/G suffix (default: one second at -relay-rate)")
 		standbyCred := f.String("standby", "", "run as read-only standby replicating from the primary named in this replica credential")
 		standbyMaxAge := f.Duration("standby-max-age", defaultStandbyMaxAge, "standby: stop serving devices when the state could not be replicated for this long")
 		logging := addLogFlags(f)
@@ -664,6 +668,16 @@ func Run(args []string) error {
 		}
 		if err := logging.configure(); err != nil {
 			return err
+		}
+		rate, err := parseBytes(*relayRate)
+		if err != nil {
+			return fmt.Errorf("-relay-rate: %w", err)
+		}
+		burst := rate
+		if *relayBurst != "" {
+			if burst, err = parseBytes(*relayBurst); err != nil {
+				return fmt.Errorf("-relay-burst: %w", err)
+			}
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -719,6 +733,10 @@ func Run(args []string) error {
 		}
 		if err != nil {
 			return err
+		}
+		if rate > 0 {
+			handler.SetRelayLimit(relay.RelayLimit{Rate: rate, Burst: burst})
+			slog.Info("relay bandwidth limited per device", "bytes_per_second", rate, "burst", burst)
 		}
 		rejected := handler.Metrics().Counter("kinfold_listener_rejected_total", "Connections closed by per-source limits.", nil)
 		limits := relay.ListenerLimits{Total: *maxConns, PerSource: *maxPerIP, RatePerSource: *ratePerIP, BurstPerSource: max(*maxPerIP, 1), OnReject: rejected.Inc}
@@ -1180,6 +1198,24 @@ func readEnrollmentFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("enrollment file %s exceeds %d bytes", path, maxEnrollmentFileSize)
 	}
 	return data, nil
+}
+
+// parseBytes reads a byte count with an optional decimal k, M or G suffix.
+func parseBytes(v string) (float64, error) {
+	scale := 1.0
+	switch {
+	case strings.HasSuffix(v, "k"), strings.HasSuffix(v, "K"):
+		scale, v = 1e3, v[:len(v)-1]
+	case strings.HasSuffix(v, "M"):
+		scale, v = 1e6, v[:len(v)-1]
+	case strings.HasSuffix(v, "G"):
+		scale, v = 1e9, v[:len(v)-1]
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil || n < 0 || math.IsInf(n, 0) || math.IsNaN(n) {
+		return 0, fmt.Errorf("invalid byte count %q", v)
+	}
+	return n * scale, nil
 }
 
 // checkNewOutput catches the common reasons writeNew would fail (existing
