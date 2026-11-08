@@ -26,7 +26,7 @@ func TestSignedConfigRoundTripAndRejections(t *testing.T) {
 	}
 	now := time.Now()
 	view := s.Config.ForPeer("alice")
-	env, err := SignConfig(priv, "alice", view, nil, now, DefaultLease)
+	env, err := SignConfig(priv, "alice", view, nil, nil, now, DefaultLease)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestSignedConfigRoundTripAndRejections(t *testing.T) {
 	if _, err := VerifyConfig(env, pub, "alice", p.IssuedAt, now); !errors.Is(err, ErrConfigRollback) {
 		t.Fatalf("exact replay of the newest envelope: %v", err)
 	}
-	future, _ := SignConfig(priv, "alice", view, nil, now.Add(time.Hour), DefaultLease)
+	future, _ := SignConfig(priv, "alice", view, nil, nil, now.Add(time.Hour), DefaultLease)
 	if _, err := VerifyConfig(future, pub, "alice", time.Time{}, now); err == nil {
 		t.Fatal("configuration from the future accepted")
 	}

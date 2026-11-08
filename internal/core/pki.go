@@ -34,6 +34,8 @@ type State struct {
 	// ConfigKey signs the configuration served to devices (D-025). It is
 	// separate from the CA key so it can be moved or rotated on its own.
 	ConfigKey []byte `json:"config_key,omitempty"`
+	// Replicas are standby controllers (D-028).
+	Replicas []Replica `json:"replicas,omitempty"`
 }
 
 func serial() (*big.Int, error) {
@@ -241,6 +243,34 @@ func LoadStateForOfflineMaintenance(dir string) (*State, error) {
 	return loadState(dir, true)
 }
 
+// Check validates a complete state as LoadState does, e.g. one received by
+// a standby controller before it is stored (D-028).
+func (s *State) Check() error { return s.check(false) }
+
+func (s *State) check(renewServer bool) error {
+	if err := s.Config.Validate(); err != nil {
+		return err
+	}
+	if err := s.validatePeerKeyHistory(); err != nil {
+		return err
+	}
+	if err := s.validateRenewedFrom(); err != nil {
+		return err
+	}
+	if err := s.validateTokens(time.Now()); err != nil {
+		return err
+	}
+	if s.ConfigKey != nil {
+		if _, err := ParseConfigKey(s.ConfigKey); err != nil {
+			return fmt.Errorf("configuration signing key: %w", err)
+		}
+	}
+	if err := s.validatePKI(renewServer); err != nil {
+		return fmt.Errorf("invalid controller PKI: %w", err)
+	}
+	return nil
+}
+
 func loadState(dir string, renewServer bool) (*State, error) {
 	path := filepath.Join(dir, "state.json")
 	for _, p := range []string{dir, path} {
@@ -256,25 +286,8 @@ func loadState(dir string, renewServer bool) (*State, error) {
 	// leading zeros); normalise them instead of refusing to load (change
 	// review finding 9). The next write stores the canonical form.
 	s.Config.canonicalizeIPv6()
-	if err := s.Config.Validate(); err != nil {
+	if err := s.check(renewServer); err != nil {
 		return nil, err
-	}
-	if err := s.validatePeerKeyHistory(); err != nil {
-		return nil, err
-	}
-	if err := s.validateRenewedFrom(); err != nil {
-		return nil, err
-	}
-	if err := s.validateTokens(time.Now()); err != nil {
-		return nil, err
-	}
-	if s.ConfigKey != nil {
-		if _, err := ParseConfigKey(s.ConfigKey); err != nil {
-			return nil, fmt.Errorf("configuration signing key: %w", err)
-		}
-	}
-	if err := s.validatePKI(renewServer); err != nil {
-		return nil, fmt.Errorf("invalid controller PKI: %w", err)
 	}
 	return &s, nil
 }
@@ -324,6 +337,9 @@ func (s *State) validatePKI(renewServer bool) error {
 	}
 	if _, err := server.Verify(x509.VerifyOptions{Roots: roots, DNSName: host, CurrentTime: verifyTime, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
 		return fmt.Errorf("server certificate verification: %w", err)
+	}
+	if err := s.validateReplicas(ca); err != nil {
+		return err
 	}
 	for _, peer := range s.Config.Peers {
 		cert, err := ParseCert(peer.Cert)
