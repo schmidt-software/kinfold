@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmidt-software/kinfold/internal/agent"
 	"github.com/schmidt-software/kinfold/internal/core"
 )
 
@@ -229,4 +231,29 @@ func TestSeenWatermarkPersists(t *testing.T) {
 	if got := readSeen(path); !got.Equal(now) {
 		t.Fatalf("watermark %v, want %v", got, now)
 	}
+}
+
+func TestSuperviseClosesAtOnceWhenControllerRefuses(t *testing.T) {
+	h, cred := newResilienceHarness(t)
+	refusing := false
+	var mu sync.Mutex
+	fetch := func(ctx context.Context, c core.Credential) (core.Config, string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if refusing {
+			return core.Config{}, "", fmt.Errorf("%w: 503", agent.ErrRefused)
+		}
+		return h.fetch(ctx, c)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- supervise(ctx, cred, "kf0", h.cfg, "alice", 5*time.Millisecond, time.Hour, nil, h.open, fetch, h.run)
+	}()
+	defer func() { cancel(); <-result }()
+	eventually(t, "initial tunnel", func() bool { return h.opens.Load() == 1 })
+	mu.Lock()
+	refusing = true
+	mu.Unlock()
+	eventually(t, "tunnel closed despite a one-hour grace period", func() bool { return h.stops.Load() == 1 })
 }

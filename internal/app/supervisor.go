@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -159,6 +160,19 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 				return stop()
 			}
 			reachable := agent.Metrics.Gauge("kinfold_controller_reachable", "1 while the last configuration fetch succeeded.", nil)
+			if err != nil && errors.Is(err, agent.ErrRefused) {
+				// The controller answered and refused: close at once, the
+				// grace period only covers an unreachable controller.
+				reachable.Set(1)
+				if cancel != nil {
+					if stopErr := stop(); stopErr != nil {
+						return stopErr
+					}
+					slog.Warn("controller refused the configuration; tunnel closed", "error", err)
+				}
+				failingSince = time.Time{}
+				continue
+			}
 			if err != nil {
 				reachable.Set(0)
 				now := time.Now()
@@ -226,7 +240,7 @@ const fetchGrace = 30 * time.Second
 // runSupervised runs the tunnel and, when autoRenew is set, renews the
 // device certificate in the background. A renewal restarts the tunnel with
 // the new credential.
-func runSupervised(ctx context.Context, path string, cred core.Credential, cfg core.Config, id, iface string, autoRenew bool) error {
+func runSupervised(ctx context.Context, path string, cred core.Credential, cfg core.Config, id, iface string, autoRenew bool, direct directOptions) error {
 	for {
 		if cert, err := credentialCertificate(cred); err == nil {
 			expiry := float64(cert.NotAfter.Unix())
@@ -263,7 +277,17 @@ func runSupervised(ctx context.Context, path string, cred core.Credential, cfg c
 				}
 			}
 		}()
-		err := supervise(runCtx, cred, iface, cfg, id, 2*time.Second, fetchGrace, client.LeaseUntil, agent.OpenTunnel, fetch, agent.RunWithUpdates)
+		var runOpts []agent.Option
+		if direct.dial || direct.listen != "" {
+			runOpts = append(runOpts, agent.WithDirect(direct.listen, client.Endpoints))
+		}
+		if direct.port > 0 {
+			client.SetDirect(direct.port, direct.addrs)
+		}
+		runner := func(ctx context.Context, cred core.Credential, cfg core.Config, id string, dev io.ReadWriteCloser, updates <-chan core.Config) error {
+			return agent.RunWithUpdates(ctx, cred, cfg, id, dev, updates, runOpts...)
+		}
+		err := supervise(runCtx, cred, iface, cfg, id, 2*time.Second, fetchGrace, client.LeaseUntil, agent.OpenTunnel, fetch, runner)
 		cancel()
 		<-persistDone
 		// Never exit while a renewal is between request and storage
@@ -339,4 +363,34 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+// directOptions configures the direct path (D-026).
+type directOptions struct {
+	dial   bool     // dial peers that advertise direct endpoints
+	listen string   // accept direct sessions on this address ("" = no)
+	port   int      // advertised port (from listen)
+	addrs  []string // advertised local addresses
+}
+
+// localAddresses lists this host's addresses that a peer might reach:
+// global and private unicast, excluding loopback and link-local.
+func localAddresses() []string {
+	ifaces, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, a := range ifaces {
+		prefix, err := netip.ParsePrefix(a.String())
+		if err != nil {
+			continue
+		}
+		ip := prefix.Addr()
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast() {
+			continue
+		}
+		out = append(out, ip.String())
+	}
+	return out
 }
