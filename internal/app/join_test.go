@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,15 +40,24 @@ func TestJoinWithTokenEndToEnd(t *testing.T) {
 	dir, _, alice := renewalController(t, time.Now)
 	server := alice.Server
 	secret, fp := issueToken(t, dir, "bob", "10.77.0.2")
-	out := filepath.Join(t.TempDir(), "bob.json")
+	work := t.TempDir()
+	out := filepath.Join(work, "bob.json")
+	tokenFile := filepath.Join(work, "token")
+	if err := os.WriteFile(tokenFile, []byte(secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	// A wrong pin aborts before the token is sent: the token stays usable.
 	wrong := strings.Repeat("0", 64)
-	if err := Run([]string{"join", "-server", server, "-ca-sha256", wrong, "-id", "bob", "-token", secret, "-out", out}); err == nil || !strings.Contains(err.Error(), "pinned fingerprint") {
+	if err := Run([]string{"join", "-server", server, "-ca-sha256", wrong, "-id", "bob", "-token-file", tokenFile, "-out", out}); err == nil || !strings.Contains(err.Error(), "pinned fingerprint") {
 		t.Fatalf("join with a wrong CA pin: %v", err)
 	}
-	if err := Run([]string{"join", "-server", server, "-ca-sha256", strings.ToUpper(fp), "-id", "bob", "-token", secret, "-out", out}); err != nil {
+	os.Remove(joinPendingPath(out)) // the token was never sent; start over with the right pin
+	if err := Run([]string{"join", "-server", server, "-ca-sha256", strings.ToUpper(fp), "-id", "bob", "-token-file", tokenFile, "-out", out}); err != nil {
 		t.Fatalf("join: %v", err)
+	}
+	if _, err := os.Stat(joinPendingPath(out)); !os.IsNotExist(err) {
+		t.Fatal("pending enrollment left behind after success")
 	}
 	var cred core.Credential
 	if err := core.ReadJSON(out, &cred); err != nil {
@@ -59,8 +69,8 @@ func TestJoinWithTokenEndToEnd(t *testing.T) {
 		t.Fatalf("enrolled credential not accepted: id=%q err=%v", id, err)
 	}
 	again := filepath.Join(t.TempDir(), "bob2.json")
-	if err := Run([]string{"join", "-server", server, "-ca-sha256", fp, "-id", "bob", "-token", secret, "-out", again}); err == nil {
-		t.Fatal("token used twice")
+	if err := Run([]string{"join", "-server", server, "-ca-sha256", fp, "-id", "bob", "-token-file", tokenFile, "-out", again}); err == nil {
+		t.Fatal("used token enrolled a second key")
 	}
 }
 
@@ -78,5 +88,57 @@ func TestControllerRequiresCertificateOutsideEnroll(t *testing.T) {
 	}
 	if _, err := agent.NormalizeFingerprint("AB:CD"); err == nil {
 		t.Fatal("short fingerprint accepted")
+	}
+}
+
+func TestJoinResumesAfterLostResponse(t *testing.T) {
+	dir, _, alice := renewalController(t, time.Now)
+	secret, fp := issueToken(t, dir, "carol", "10.77.0.3")
+	out := filepath.Join(t.TempDir(), "carol.json")
+	key, request, err := core.NewEnrollment("carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := core.WriteJSON(joinPendingPath(out), joinPending{Server: alice.Server, ID: "carol", Token: secret, Key: key, Request: request}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, _, err := agent.Join(ctx, alice.Server, fp, secret, request); err != nil {
+		t.Fatalf("first request: %v", err)
+	} // response "lost"
+	if err := Run([]string{"join", "-server", alice.Server, "-ca-sha256", fp, "-id", "carol", "-token-file", "/nonexistent", "-out", out}); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	var cred core.Credential
+	if err := core.ReadJSON(out, &cred); err != nil || string(cred.Key) != string(key) {
+		t.Fatalf("resumed credential does not use the pending key: %v", err)
+	}
+}
+
+func TestOfflineAuthorizationDropsPendingToken(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := core.InitState(dir, "localhost:8443", "10.77.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	issueToken(t, dir, "laptop", "10.77.0.5")
+	if err := Run([]string{"add-peer", "-data", dir, "-id", "laptop", "-ip", "10.77.0.5", "-out", filepath.Join(t.TempDir(), "l.json")}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := core.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.EnrollmentTokens) != 0 {
+		t.Fatal("token survived offline authorization of its device")
+	}
+}
+
+func TestUnknownTokenIsRefusedWithoutTouchingState(t *testing.T) {
+	cache := &tokenCache{}
+	cache.update(&core.State{})
+	enroll := controllerEnroller("/nonexistent/state", time.Now, cache)
+	if _, _, err := enroll("guess", nil); err != core.ErrTokenInvalid {
+		t.Fatalf("unknown token: %v (the state must not be loaded or locked)", err)
 	}
 }

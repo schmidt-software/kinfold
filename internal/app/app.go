@@ -434,6 +434,7 @@ func Run(args []string) error {
 		var cert []byte
 		if args[0] == "approve" {
 			cert, err = s.ApproveEnrollment(*id, *ip, request)
+			s.DropTokens(*id, *ip)
 		} else {
 			cert, err = s.RotatePeerEnrollment(*id, request)
 		}
@@ -557,6 +558,7 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
+		s.DropTokens(*id, *ip) // a leftover token must not re-enroll this device later
 		data, err := json.MarshalIndent(cred, "", "  ")
 		if err != nil {
 			return err
@@ -675,14 +677,21 @@ func Run(args []string) error {
 			return err
 		}
 		handler.SetRenewer(controllerRenewer(*dir, time.Now))
-		handler.SetEnroller(controllerEnroller(*dir, time.Now))
+		tokens := newTokenCache(s)
+		handler.SetEnroller(controllerEnroller(*dir, time.Now, tokens))
 		server := newControllerServer(handler, tlsCfg, defaultServerTimeouts)
 		for _, warning := range s.CertificateWarnings(time.Now(), 30*24*time.Hour) {
 			slog.Warn(warning)
 		}
 		slog.Info("controller listening", "address", ln.Addr().String(), "build", readBuildInfo().short(), "peers", len(s.Config.Peers))
 		return serveController(ctx, server, ln, handler, func(ctx context.Context) {
-			handler.Watch(ctx.Done(), s, func() (*core.State, error) { return core.LoadState(*dir) }, time.Second)
+			handler.Watch(ctx.Done(), s, func() (*core.State, error) {
+				next, err := core.LoadState(*dir)
+				if err == nil {
+					tokens.update(next)
+				}
+				return next, err
+			}, time.Second)
 		}, 5*time.Second)
 	case "status", "run":
 		f := flags(args[0])
@@ -834,7 +843,7 @@ func Run(args []string) error {
 			return err
 		}
 		fmt.Printf("Enrollment token for %s (%s), valid until %s, single use:\n\n  %s\n\n", *id, *ip, s.EnrollmentTokens[len(s.EnrollmentTokens)-1].NotAfter.Format(time.RFC3339), secret)
-		fmt.Printf("Give the device this command over a confidential channel:\n\n  kinfold join -server %s -ca-sha256 %s -id %s -token %s -out %s.json\n\n", s.Server, caFP, *id, secret, *id)
+		fmt.Printf("Give the device the token and this command over a confidential channel; the device reads the token from standard input so it does not appear in process lists:\n\n  kinfold join -server %s -ca-sha256 %s -id %s -token-file - -out %s.json\n\n", s.Server, caFP, *id, *id)
 		fmt.Println("The token is shown only once; revoke it with token-revoke if it leaks.")
 		return nil
 	case "token-list":
@@ -886,7 +895,7 @@ func Run(args []string) error {
 		server := f.String("server", "", "controller host:port")
 		fp := f.String("ca-sha256", "", "SHA-256 fingerprint of the controller CA (from the administrator)")
 		id := f.String("id", "", "device ID the token was issued for")
-		token := f.String("token", "", "single-use enrollment token")
+		tokenFile := f.String("token-file", "", "file containing the single-use enrollment token, or - for standard input")
 		out := f.String("out", "", "new private credential file")
 		if err := f.Parse(args[1:]); err != nil {
 			return err
@@ -894,23 +903,15 @@ func Run(args []string) error {
 		if err := noArgs(f); err != nil {
 			return err
 		}
-		if *server == "" || *fp == "" || *id == "" || *token == "" || *out == "" {
-			return fmt.Errorf("-server, -ca-sha256, -id, -token and -out are required")
+		if *server == "" || *fp == "" || *id == "" || *tokenFile == "" || *out == "" {
+			return fmt.Errorf("-server, -ca-sha256, -id, -token-file and -out are required")
 		}
 		if _, err := os.Stat(*out); err == nil {
 			return fmt.Errorf("%s already exists", *out)
 		}
-		key, request, err := core.NewEnrollment(*id)
-		if err != nil {
-			return err
-		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		cert, ca, err := agent.Join(ctx, *server, *fp, *token, request)
-		if err != nil {
-			return err
-		}
-		cred, err := core.CompleteEnrollment(*server, ca, cert, key)
+		cred, err := joinWithToken(ctx, *server, *fp, *id, *tokenFile, *out)
 		if err != nil {
 			return err
 		}
@@ -919,8 +920,9 @@ func Run(args []string) error {
 			return err
 		}
 		if err := writeNew(*out, append(data, '\n')); err != nil {
-			return err
+			return fmt.Errorf("%w (the pending enrollment in %s allows a retry)", err, joinPendingPath(*out))
 		}
+		os.Remove(joinPendingPath(*out))
 		fmt.Printf("Enrolled %s. Private credential written to %s.\n", *id, *out)
 		return nil
 	case "version":

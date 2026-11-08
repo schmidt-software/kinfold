@@ -36,7 +36,8 @@ func renewalController(t *testing.T, now func() time.Time) (dir, credPath string
 		t.Fatal(err)
 	}
 	handler.SetRenewer(controllerRenewer(dir, now))
-	handler.SetEnroller(controllerEnroller(dir, now))
+	tokens := newTokenCache(state)
+	handler.SetEnroller(controllerEnroller(dir, now, tokens))
 	tlsCfg, err := relay.TLSConfig(state)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +52,13 @@ func renewalController(t *testing.T, now func() time.Time) (dir, credPath string
 	done := make(chan error, 1)
 	go func() {
 		done <- serveController(ctx, server, ln, handler, func(ctx context.Context) {
-			handler.Watch(ctx.Done(), state, func() (*core.State, error) { return core.LoadState(dir) }, 20*time.Millisecond)
+			handler.Watch(ctx.Done(), state, func() (*core.State, error) {
+				next, err := core.LoadState(dir)
+				if err == nil {
+					tokens.update(next)
+				}
+				return next, err
+			}, 20*time.Millisecond)
 		}, time.Second)
 	}()
 	t.Cleanup(func() {

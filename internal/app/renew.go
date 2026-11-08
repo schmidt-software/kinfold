@@ -6,9 +6,12 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/schmidt-software/kinfold/internal/agent"
@@ -215,10 +218,37 @@ func fetchAfterRenewal(ctx context.Context, cred core.Credential) (core.Config, 
 	return core.Config{}, "", fmt.Errorf("controller did not accept the renewed certificate: %w", lastErr)
 }
 
+// tokenCache holds the hashes of the tokens in the state the controller
+// last loaded, so an unauthenticated request with an unknown token is
+// refused without taking the state lock (v0.3 review finding 1). The
+// watcher refreshes it about once per second.
+type tokenCache struct {
+	hashes atomic.Pointer[map[string]bool]
+}
+
+func newTokenCache(s *core.State) *tokenCache {
+	c := &tokenCache{}
+	c.update(s)
+	return c
+}
+
+func (c *tokenCache) update(s *core.State) {
+	m := make(map[string]bool, len(s.EnrollmentTokens))
+	for _, t := range s.EnrollmentTokens {
+		m[t.Hash] = true
+	}
+	c.hashes.Store(&m)
+}
+
+func (c *tokenCache) has(secret string) bool { return (*c.hashes.Load())[core.TokenHash(secret)] }
+
 // controllerEnroller consumes enrollment tokens on the controller under the
 // state lock (D-024).
-func controllerEnroller(dir string, now func() time.Time) relay.Enroller {
+func controllerEnroller(dir string, now func() time.Time, cache *tokenCache) relay.Enroller {
 	return func(token string, request []byte) (string, []byte, error) {
+		if !cache.has(token) {
+			return "", nil, core.ErrTokenInvalid
+		}
 		s, lock, err := loadWritableState(dir)
 		if errors.Is(err, core.ErrStateLocked) {
 			return "", nil, relay.ErrBusy
@@ -227,13 +257,16 @@ func controllerEnroller(dir string, now func() time.Time) relay.Enroller {
 			return "", nil, fmt.Errorf("load state: %w", err)
 		}
 		defer lock.Close()
-		id, cert, err := s.EnrollWithToken(token, request, now())
+		id, cert, changed, err := s.EnrollWithToken(token, request, now())
 		if err != nil {
 			return "", nil, err
 		}
-		if err := core.WriteJSON(filepath.Join(dir, "state.json"), s); err != nil {
-			return "", nil, fmt.Errorf("persist enrollment: %w", err)
+		if changed {
+			if err := core.WriteJSON(filepath.Join(dir, "state.json"), s); err != nil {
+				return "", nil, fmt.Errorf("persist enrollment: %w", err)
+			}
 		}
+		cache.update(s)
 		return id, cert, nil
 	}
 }
@@ -249,4 +282,83 @@ func caFingerprint(s *core.State) (string, error) {
 		return "", err
 	}
 	return core.Fingerprint(cert), nil
+}
+
+// joinPending is stored next to the future credential before an enrollment
+// request is sent, so a lost response can be collected again with the same
+// token and key (the controller keeps used tokens until they expire).
+type joinPending struct {
+	Server  string `json:"server"`
+	ID      string `json:"id"`
+	Token   string `json:"token"`
+	Key     []byte `json:"key"`
+	Request []byte `json:"request"`
+}
+
+func joinPendingPath(out string) string { return out + ".joining" }
+
+const maxTokenFileBytes = 1024
+
+func readToken(path string) (string, error) {
+	var r io.Reader = os.Stdin
+	if path != "-" {
+		f, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		r = f
+	}
+	data, err := io.ReadAll(io.LimitReader(r, maxTokenFileBytes+1))
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" || len(data) > maxTokenFileBytes {
+		return "", fmt.Errorf("token must be a single line of at most %d bytes", maxTokenFileBytes)
+	}
+	return token, nil
+}
+
+// joinWithToken enrolls the device, resuming an interrupted attempt from the
+// pending file next to out when there is one.
+func joinWithToken(ctx context.Context, server, fingerprint, id, tokenFile, out string) (core.Credential, error) {
+	var pending joinPending
+	path := joinPendingPath(out)
+	if _, err := os.Stat(path); err == nil {
+		if err := core.CheckPrivate(path); err != nil {
+			return core.Credential{}, err
+		}
+		if err := core.ReadJSON(path, &pending); err != nil {
+			return core.Credential{}, err
+		}
+		if pending.Server != server || pending.ID != id {
+			return core.Credential{}, fmt.Errorf("%s belongs to an enrollment of %s at %s; remove it to start over", path, pending.ID, pending.Server)
+		}
+		slog.Info("resuming interrupted enrollment")
+	} else {
+		token, err := readToken(tokenFile)
+		if err != nil {
+			return core.Credential{}, err
+		}
+		if err := checkWritable(out); err != nil {
+			return core.Credential{}, err
+		}
+		key, request, err := core.NewEnrollment(id)
+		if err != nil {
+			return core.Credential{}, err
+		}
+		pending = joinPending{Server: server, ID: id, Token: token, Key: key, Request: request}
+		if err := core.WriteJSON(path, pending); err != nil {
+			return core.Credential{}, fmt.Errorf("store pending enrollment: %w", err)
+		}
+	}
+	cert, ca, err := agent.Join(ctx, server, fingerprint, pending.Token, pending.Request)
+	if err != nil {
+		if strings.Contains(err.Error(), "403") {
+			os.Remove(path) // the controller refused the token; nothing was issued for this key
+		}
+		return core.Credential{}, err
+	}
+	return core.CompleteEnrollment(server, ca, cert, pending.Key)
 }
