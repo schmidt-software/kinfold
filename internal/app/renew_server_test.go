@@ -70,3 +70,37 @@ func TestRenewExpiredServerCertificate(t *testing.T) {
 		t.Fatal("renewal changed CA or membership")
 	}
 }
+
+func TestRenewServerChangesControllerAddress(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := core.InitState(dir, "old.example.com:8443", "10.77.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	cred := filepath.Join(t.TempDir(), "alice.json")
+	if err := Run([]string{"add-peer", "-data", dir, "-id", "alice", "-ip", "10.77.0.1", "-out", cred}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := core.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Run([]string{"renew-server", "-data", dir, "-server", "alice:9443"}); err == nil {
+		t.Fatal("controller host equal to a device ID accepted")
+	}
+	if err := Run([]string{"renew-server", "-data", dir, "-server", "new.example.com"}); err == nil {
+		t.Fatal("address without port accepted")
+	}
+	if err := Run([]string{"renew-server", "-data", dir, "-server", "new.example.com:9443"}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := core.LoadState(dir)
+	if err != nil {
+		t.Fatalf("moved state does not load: %v", err)
+	}
+	if after.Server != "new.example.com:9443" || string(after.CA) != string(before.CA) || after.Config.Peers[0].IP != "10.77.0.1" {
+		t.Fatalf("unexpected state after move: server=%s", after.Server)
+	}
+	if string(after.Config.Peers[0].Cert) != string(before.Config.Peers[0].Cert) {
+		t.Fatal("device certificate changed by the controller move")
+	}
+}

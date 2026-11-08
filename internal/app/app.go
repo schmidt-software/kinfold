@@ -62,6 +62,7 @@ func Run(args []string) error {
 	case "renew-server":
 		f := flags("renew-server")
 		dir := f.String("data", "controller-data", "controller data directory")
+		server := f.String("server", "", "move the controller to this new host:port (devices need the new address in their credential)")
 		if err := f.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -77,11 +78,20 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := s.RenewServerCertificate(); err != nil {
+		if *server != "" {
+			err = s.ChangeServerAddress(*server)
+		} else {
+			err = s.RenewServerCertificate()
+		}
+		if err != nil {
 			return err
 		}
 		if err := core.WriteJSON(filepath.Join(*dir, "state.json"), s); err != nil {
 			return err
+		}
+		if *server != "" {
+			fmt.Printf("Controller moved to %s on disk; restart the controller and set \"server\" to %s in every device credential.\n", *server, *server)
+			return nil
 		}
 		fmt.Println("Controller certificate and key renewed on disk; restart the controller to restore service.")
 		return nil

@@ -368,6 +368,35 @@ func (s *State) RenewServerCertificate() error {
 	if err := s.validatePKI(true); err != nil {
 		return fmt.Errorf("invalid controller PKI: %w", err)
 	}
+	return s.issueServerCertificate()
+}
+
+// ChangeServerAddress moves the controller to a new host:port and issues a
+// server certificate for it. The CA, device certificates and keys stay
+// valid; devices only need the new address in their credential file.
+func (s *State) ChangeServerAddress(address string) error {
+	if err := s.validatePKI(true); err != nil {
+		return fmt.Errorf("invalid controller PKI: %w", err)
+	}
+	if err := ValidateServerAddress(address); err != nil {
+		return err
+	}
+	host, _, _ := net.SplitHostPort(address)
+	for _, peer := range s.Config.Peers {
+		if strings.EqualFold(peer.ID, host) {
+			return fmt.Errorf("new controller host name %q equals the ID of a device", host)
+		}
+	}
+	old := s.Server
+	s.Server = address
+	if err := s.issueServerCertificate(); err != nil {
+		s.Server = old
+		return err
+	}
+	return nil
+}
+
+func (s *State) issueServerCertificate() error {
 	caPair, err := tls.X509KeyPair(s.CA, s.CAKey)
 	if err != nil {
 		return err
