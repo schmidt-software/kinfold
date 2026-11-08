@@ -58,7 +58,7 @@ The script builds a Linux binary, creates temporary credentials and an isolated 
 
 The controller runs on Linux or macOS; the VPN client runs on **Linux** and **macOS**. On Linux it requires `/dev/net/tun`, the `ip` command from iproute2 or BusyBox in `/usr/sbin`, `/sbin`, `/usr/bin` or `/bin` (`PATH` is not used), and administrator rights or `CAP_NET_ADMIN`. The virtual network must not overlap with existing local networks or routes.
 
-On macOS the client needs root (`sudo`) and uses `/sbin/ifconfig` and `/sbin/route`. The kernel picks the interface name (`utunN`, logged as `utun interface created`); `-interface` is ignored, and the systemd units and `kf-` interface names apply to Linux only. There is no launchd unit yet. `sh scripts/macos-smoke.sh` checks a macOS client against a Linux client in Docker (asks for the `sudo` password).
+On macOS the client needs root (`sudo`) and uses `/sbin/ifconfig` and `/sbin/route`. The kernel picks the interface name (`utunN`, logged as `utun interface created`); `-interface` is ignored, and the systemd units and `kf-` interface names apply to Linux only. See [Running as a service](#running-as-a-service) for a launchd daemon. `sh scripts/macos-smoke.sh` checks a macOS client against a Linux client in Docker over IPv4 and IPv6 (asks for the `sudo` password).
 
 1. Build and initialize on the controller. Replace `vpn.example.com:8443` with the DNS name or IP address and TCP port of the controller reachable by all clients. The name is embedded in the server certificate and must match the name used.
 
@@ -139,6 +139,8 @@ Failover of the *administration* is manual: if the primary is gone for good, mak
 - `kinfold-client@.service` runs one client per credential: `kinfold-client@alice` reads `/var/lib/kinfold-client/alice/credential.json` and creates the interface `kf-alice` (instance names are therefore limited to 12 characters). It uses a dynamic user with only `CAP_NET_ADMIN` and access to `/dev/net/tun`; the credential directory stays writable for automatic certificate renewal.
 
 Both units restrict file system, kernel, device, address-family and system-call access (`systemd-analyze security` rates them 1.6 and 2.1, "OK"). They were verified under systemd 252 (Debian 12). Under the client unit `/proc/sys` is read-only, so IPv6 duplicate address detection stays enabled and a new ULA becomes usable about one second after the tunnel starts.
+
+**macOS:** `packaging/launchd/kinfold-client.plist` runs one client as a launch daemon (as root, because utun needs it) with the credential in `/Library/Application Support/Kinfold/credential.json` and the log in `/var/log/kinfold-client.log`; installation steps are at the top of the file. Unlike the systemd unit it does not restrict the process further.
 
 ## Optional IPv6
 
