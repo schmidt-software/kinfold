@@ -43,13 +43,13 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   fi
   echo "built $out/$name"
 done
-cp packaging/systemd/*.service "$out/"
+cp packaging/systemd/*.service packaging/launchd/*.plist "$out/"
 (
   cd "$out"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum kinfold-v* *.service > SHA256SUMS
+    sha256sum kinfold-v* *.service *.plist > SHA256SUMS
   else
-    shasum -a 256 kinfold-v* *.service > SHA256SUMS
+    shasum -a 256 kinfold-v* *.service *.plist > SHA256SUMS
   fi
 )
 echo "checksums in $out/SHA256SUMS"
