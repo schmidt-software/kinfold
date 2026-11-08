@@ -11,10 +11,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/schmidt-software/kinfold/internal/core"
+	"github.com/schmidt-software/kinfold/internal/metrics"
 )
 
 type pending struct {
@@ -48,6 +50,7 @@ const maxRenewalRequestBytes = 64 << 10
 const defaultPairingTimeout = 30 * time.Second
 
 type Server struct {
+	metrics        *metrics.Registry
 	renew          Renewer
 	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
 	renewInterval  time.Duration
@@ -73,7 +76,31 @@ func New(config core.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, views: views, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}, nil
+	s := &Server{metrics: metrics.New(), pairingTimeout: defaultPairingTimeout, renewInterval: defaultRenewalInterval, config: config, revision: revision, members: members, views: views, waiting: make(map[string]*pending), active: make(map[net.Conn]endpoint), available: true}
+	s.registerMetrics()
+	return s, nil
+}
+
+// Metrics returns the relay's metrics registry.
+func (s *Server) Metrics() *metrics.Registry { return s.metrics }
+
+func (s *Server) registerMetrics() {
+	locked := func(fn func() float64) func() float64 {
+		return func() float64 { s.mu.Lock(); defer s.mu.Unlock(); return fn() }
+	}
+	s.metrics.GaugeFunc("kinfold_relay_endpoints", "Relay endpoints currently waiting or bridged.", nil, locked(func() float64 { return float64(len(s.active)) }))
+	s.metrics.GaugeFunc("kinfold_relay_waiting", "Relay endpoints waiting for their partner.", nil, locked(func() float64 { return float64(len(s.waiting)) }))
+	s.metrics.GaugeFunc("kinfold_config_available", "1 while the controller serves a valid configuration.", nil, locked(func() float64 {
+		if s.available {
+			return 1
+		}
+		return 0
+	}))
+	s.metrics.GaugeFunc("kinfold_peers", "Authorized devices in the configuration.", nil, locked(func() float64 { return float64(len(s.config.Peers)) }))
+}
+
+func (s *Server) count(name, help string, labels metrics.Labels) {
+	s.metrics.Counter(name, help, labels).Inc()
 }
 
 // view is the configuration one device receives and its revision, which the
@@ -135,8 +162,18 @@ func (s *Server) Update(config core.Config, err error) error {
 			stale = s.invalidate()
 		}
 		s.available = false
+		s.count("kinfold_config_reloads_total", "Configuration reloads, by result.", metrics.Labels{"result": "failed"})
+		s.metrics.Counter("kinfold_relay_sessions_closed_total", "Relay endpoints closed by the controller, by reason.", metrics.Labels{"reason": "unavailable"}).Add(uint64(len(stale)))
 		return err
 	}
+	if s.revision == revision && s.available {
+		s.count("kinfold_config_reloads_total", "Configuration reloads, by result.", metrics.Labels{"result": "unchanged"})
+	} else {
+		s.count("kinfold_config_reloads_total", "Configuration reloads, by result.", metrics.Labels{"result": "applied"})
+	}
+	defer func() {
+		s.metrics.Counter("kinfold_relay_sessions_closed_total", "Relay endpoints closed by the controller, by reason.", metrics.Labels{"reason": "config_change"}).Add(uint64(len(stale)))
+	}()
 	if !s.available {
 		stale = s.invalidate()
 		s.config, s.revision, s.members, s.views = config, revision, members, views
@@ -210,19 +247,19 @@ func (s *Server) SetRenewer(r Renewer) { s.renew = r }
 
 func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request, id string) {
 	if s.renew == nil {
-		reject(w, "not found", http.StatusNotFound)
+		s.reject(w, "not found", http.StatusNotFound)
 		return
 	}
 	presented := r.TLS.PeerCertificates[0]
 	fingerprint := core.Fingerprint(presented)
 	if s.renewalBlocked(fingerprint) {
 		w.Header().Set("Retry-After", "30")
-		reject(w, "renewal recently failed; retry later", http.StatusTooManyRequests)
+		s.reject(w, "renewal recently failed; retry later", http.StatusTooManyRequests)
 		return
 	}
 	request, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRenewalRequestBytes))
 	if err != nil {
-		reject(w, "renewal request too large or unreadable", http.StatusBadRequest)
+		s.reject(w, "renewal request too large or unreadable", http.StatusBadRequest)
 		return
 	}
 	cert, err := s.renew(id, presented, request)
@@ -231,18 +268,19 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request, id string) 
 	}
 	switch {
 	case errors.Is(err, core.ErrRenewalNotDue):
-		reject(w, err.Error(), http.StatusConflict)
+		s.reject(w, err.Error(), http.StatusConflict)
 		return
 	case errors.Is(err, ErrBusy):
 		w.Header().Set("Retry-After", "5")
-		reject(w, "controller busy; retry later", http.StatusServiceUnavailable)
+		s.reject(w, "controller busy; retry later", http.StatusServiceUnavailable)
 		return
 	case err != nil:
 		slog.Warn("certificate renewal rejected", "peer", id, "error", err)
-		reject(w, "renewal rejected: "+err.Error(), http.StatusBadRequest)
+		s.reject(w, "renewal rejected: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	slog.Info("device certificate renewed", "peer", id)
+	s.count("kinfold_renewals_total", "Device certificates issued by online renewal.", nil)
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	w.Header().Set("Connection", "close")
 	if _, err := w.Write(cert); err != nil {
@@ -352,7 +390,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	config, members, views, available, generation := s.config, s.members, s.views, s.available, s.generation
 	s.mu.Unlock()
 	if !available {
-		reject(w, "configuration unavailable", http.StatusServiceUnavailable)
+		s.reject(w, "configuration unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	id, ok := identity(r, members)
@@ -364,7 +402,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.handleRenew(w, r, "")
 			return
 		}
-		reject(w, "not authorized", http.StatusForbidden)
+		s.reject(w, "not authorized", http.StatusForbidden)
 		return
 	}
 	switch {
@@ -378,19 +416,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodConnect && r.URL.Path == "/relay":
 		target := r.URL.Query().Get("peer")
 		if _, ok := config.Peer(target); !ok || id == target {
-			reject(w, "invalid target", http.StatusBadRequest)
+			s.reject(w, "invalid target", http.StatusBadRequest)
 			return
 		}
 		s.connect(w, r, id, target, generation)
 	default:
-		reject(w, "not found", http.StatusNotFound)
+		s.reject(w, "not found", http.StatusNotFound)
 	}
 }
 
 // reject answers with an error and closes the connection afterwards. A
 // rejected client (unknown, removed or misbehaving) must not keep an idle
 // keep-alive connection and with it a listener slot (review R-01).
-func reject(w http.ResponseWriter, message string, status int) {
+func (s *Server) reject(w http.ResponseWriter, message string, status int) {
+	s.metrics.Counter("kinfold_relay_rejections_total", "Requests rejected by the controller, by HTTP status.", metrics.Labels{"status": strconv.Itoa(status)}).Inc()
 	w.Header().Set("Connection", "close")
 	http.Error(w, message, status)
 }
@@ -401,17 +440,17 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	s.mu.Lock()
 	if !s.available || s.generation != generation {
 		s.mu.Unlock()
-		reject(w, "configuration changed", http.StatusServiceUnavailable)
+		s.reject(w, "configuration changed", http.StatusServiceUnavailable)
 		return
 	}
 	if r.Header.Get("X-Kinfold-Config-Revision") != s.views[from].revision {
 		s.mu.Unlock()
-		reject(w, "current configuration required", http.StatusConflict)
+		s.reject(w, "current configuration required", http.StatusConflict)
 		return
 	}
 	if !s.config.Permits(from, to) && !s.config.Permits(to, from) {
 		s.mu.Unlock()
-		reject(w, "peer pair not authorized", http.StatusForbidden)
+		s.reject(w, "peer pair not authorized", http.StatusForbidden)
 		return
 	}
 	// Remember the pair's authorization; if it changes before this endpoint
@@ -423,20 +462,23 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	// Supersede it instead of rejecting the reconnect until TCP keepalive
 	// notices the dead connection (review R-06).
 	superseded := s.supersede(from, to)
+	if len(superseded) > 0 {
+		s.metrics.Counter("kinfold_relay_sessions_closed_total", "Relay endpoints closed by the controller, by reason.", metrics.Labels{"reason": "superseded"}).Add(uint64(len(superseded)))
+	}
 	if status := s.admissionStatus(from); status != 0 {
 		s.mu.Unlock()
 		forceClose(superseded...)
 		if status == http.StatusTooManyRequests {
 			w.Header().Set("Retry-After", "2")
 		}
-		reject(w, "relay connection limit reached", status)
+		s.reject(w, "relay connection limit reached", status)
 		return
 	}
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		s.mu.Unlock()
 		forceClose(superseded...)
-		reject(w, "hijacking not supported", http.StatusInternalServerError)
+		s.reject(w, "hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 	conn, rw, err := hijacker.Hijack()
@@ -489,6 +531,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, from, to string
 	}
 	other := s.waiting[reverse]
 	if other != nil {
+		s.count("kinfold_relay_pairings_total", "Relay endpoint pairs bridged.", nil)
 		delete(s.waiting, reverse)
 		other.match <- conn
 		s.mu.Unlock()
