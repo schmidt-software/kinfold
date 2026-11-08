@@ -100,3 +100,56 @@ func TestDirectListenerRejectsUnknownCertificate(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestDirectListenerLimitsHandshakesPerSource(t *testing.T) {
+	cfg, a, b := setup(t)
+	bobAddr := freeAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithUpdates(ctx, b, cfg.ForPeer("bob"), "bob", newFakeTun(), nil, WithDirect(bobAddr, nil))
+	}()
+	defer func() { cancel(); <-done }()
+	var idle []net.Conn
+	for i := 0; i < 50 && len(idle) < maxPendingPerSource; i++ {
+		c, err := net.Dial("tcp", bobAddr)
+		if err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		idle = append(idle, c)
+	}
+	defer func() {
+		for _, c := range idle {
+			c.Close()
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	extra, err := net.Dial("tcp", bobAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+	extra.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := extra.Read(make([]byte, 1)); err == nil || strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("third idle connection from one source was not closed: %v", err)
+	}
+	// Once the idle connections are gone, an authorized device gets through
+	// and receives the acceptance marker.
+	for _, c := range idle {
+		c.Close()
+	}
+	idle = nil
+	bob, _ := cfg.Peer("bob")
+	var conn net.Conn
+	for i := 0; i < 50; i++ {
+		if conn, err = dialDirect(ctx, a, bob, bobAddr); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("authorized direct dial: %v", err)
+	}
+	conn.Close()
+}

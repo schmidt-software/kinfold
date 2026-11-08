@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -31,14 +32,15 @@ func NormalizeFingerprint(fp string) (string, error) {
 // authenticated before the token is sent: its certificate chain must
 // contain the CA whose SHA-256 fingerprint is caFingerprint, and the server
 // certificate must be valid for the server's host name under that CA. It
-// returns the new certificate and the pinned CA (both PEM).
-func Join(ctx context.Context, server, caFingerprint, token string, request []byte) ([]byte, []byte, error) {
+// returns the new certificate and the pinned CA (both PEM) and the
+// controller's configuration key, if it sent one.
+func Join(ctx context.Context, server, caFingerprint, token string, request []byte) ([]byte, []byte, []byte, error) {
 	if err := core.ValidateServerAddress(server); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	pin, err := NormalizeFingerprint(caFingerprint)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	host, _, _ := net.SplitHostPort(server)
 	var ca *x509.Certificate
@@ -72,27 +74,33 @@ func Join(ctx context.Context, server, caFingerprint, token string, request []by
 		Request []byte `json:"request"`
 	}{token, request})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+server+"/enroll", bytes.NewReader(body))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRenewalResponseBytes+1))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("controller: %q: %q", resp.Status, bytes.TrimSpace(data))
+		return nil, nil, nil, fmt.Errorf("controller: %q: %q", resp.Status, bytes.TrimSpace(data))
 	}
 	if len(data) > maxRenewalResponseBytes {
-		return nil, nil, fmt.Errorf("enrollment response exceeds %d bytes", maxRenewalResponseBytes)
+		return nil, nil, nil, fmt.Errorf("enrollment response exceeds %d bytes", maxRenewalResponseBytes)
 	}
-	return data, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}), nil
+	var configKey []byte
+	if h := resp.Header.Get("X-Kinfold-Config-Key"); h != "" {
+		if key, err := base64.StdEncoding.DecodeString(h); err == nil && len(key) == 32 {
+			configKey = key
+		}
+	}
+	return data, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}), configKey, nil
 }

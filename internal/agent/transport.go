@@ -234,7 +234,7 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 		return core.Config{}, "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable {
+	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable) && resp.Header.Get("X-Kinfold-Shutdown") == "" {
 		return core.Config{}, "", fmt.Errorf("%w: %q", ErrRefused, resp.Status)
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -260,7 +260,10 @@ func (c *ConfigClient) Fetch(ctx context.Context) (core.Config, string, error) {
 				return cfg, "", fmt.Errorf("signed configuration is for %q, but this certificate belongs to %q", payload.Peer, p.ID)
 			}
 			c.mu.Lock()
-			c.notBefore, c.leaseUntil, c.endpoints = payload.IssuedAt, payload.NotAfter, payload.Endpoints
+			// The lease runs from receipt on the device's own monotonic
+			// clock, independent of how its wall clock compares to the
+			// controller's (v0.4 review finding 3).
+			c.notBefore, c.leaseUntil, c.endpoints = payload.IssuedAt, time.Now().Add(payload.LeaseDuration()), payload.Endpoints
 			c.mu.Unlock()
 			return cfg, p.ID, nil
 		}

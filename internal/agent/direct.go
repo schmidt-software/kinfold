@@ -5,8 +5,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/schmidt-software/kinfold/internal/core"
@@ -23,8 +25,13 @@ import (
 
 const (
 	directDialTimeout      = 3 * time.Second
-	directHandshakeTimeout = 10 * time.Second
+	directHandshakeTimeout = 5 * time.Second
 	maxPendingHandshakes   = 16
+	maxPendingPerSource    = 2
+	// acceptedMarker is written by the accepting side once it has taken the
+	// session; in TLS 1.3 the dialer's handshake completes before the
+	// acceptor has checked its certificate (v0.4 review finding 6).
+	acceptedMarker = 0x01
 )
 
 // Option configures RunWithUpdates.
@@ -87,6 +94,18 @@ func dialDirect(ctx context.Context, cred core.Credential, peer core.Peer, addr 
 		return nil, err
 	}
 	conn := raw.(*tls.Conn)
+	marker := []byte{0}
+	if err := conn.SetReadDeadline(time.Now().Add(directHandshakeTimeout)); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if _, err := io.ReadFull(conn, marker); err != nil || marker[0] != acceptedMarker {
+		conn.Close()
+		if err == nil {
+			err = fmt.Errorf("unexpected acceptance marker")
+		}
+		return nil, fmt.Errorf("peer did not accept the direct session: %w", err)
+	}
 	return withCertificateDeadline(conn, outer, chain)
 }
 
@@ -117,6 +136,10 @@ func acceptDirect(ctx context.Context, ln net.Listener, cred core.Credential, lo
 		ln.Close()
 	}()
 	pending := make(chan struct{}, maxPendingHandshakes)
+	var mu sync.Mutex
+	perSource := map[string]int{}
+	var handshakes sync.WaitGroup
+	defer handshakes.Wait()
 	for {
 		raw, err := ln.Accept()
 		if err != nil {
@@ -125,14 +148,37 @@ func acceptDirect(ctx context.Context, ln net.Listener, cred core.Credential, lo
 			}
 			return
 		}
+		source := remoteHost(raw)
+		mu.Lock()
+		busy := perSource[source] >= maxPendingPerSource
+		if !busy {
+			perSource[source]++
+		}
+		mu.Unlock()
+		if busy {
+			raw.Close() // one source may not hold all handshake slots (finding 5)
+			continue
+		}
 		select {
 		case pending <- struct{}{}:
 		default:
+			mu.Lock()
+			perSource[source]--
+			mu.Unlock()
 			raw.Close() // too many unauthenticated handshakes in flight
 			continue
 		}
+		handshakes.Add(1)
 		go func() {
-			defer func() { <-pending }()
+			defer handshakes.Done()
+			defer func() {
+				<-pending
+				mu.Lock()
+				if perSource[source]--; perSource[source] <= 0 {
+					delete(perSource, source)
+				}
+				mu.Unlock()
+			}()
 			var target *link
 			var chain []*x509.Certificate
 			cfg := &tls.Config{
@@ -162,11 +208,44 @@ func acceptDirect(ctx context.Context, ln net.Listener, cred core.Credential, lo
 			if err != nil {
 				return
 			}
-			select {
-			case target.incoming <- session:
-			default:
-				session.Close() // the link is already switching to another direct session
+			if !deliver(target, session) {
+				session.Close()
 			}
 		}()
 	}
+}
+
+// deliver hands an established direct session to its link: it confirms
+// acceptance to the peer and passes the session on, unless the link stopped.
+func deliver(l *link, session net.Conn) bool {
+	select {
+	case <-l.done:
+		return false
+	default:
+	}
+	if err := session.SetWriteDeadline(time.Now().Add(directHandshakeTimeout)); err != nil {
+		return false
+	}
+	if _, err := session.Write([]byte{acceptedMarker}); err != nil {
+		return false
+	}
+	if err := session.SetWriteDeadline(time.Time{}); err != nil {
+		return false
+	}
+	select {
+	case l.incoming <- session:
+		return true
+	case <-l.done:
+		return false
+	case <-time.After(directHandshakeTimeout):
+		return false
+	}
+}
+
+func remoteHost(c net.Conn) string {
+	host, _, err := net.SplitHostPort(c.RemoteAddr().String())
+	if err != nil {
+		return c.RemoteAddr().String()
+	}
+	return host
 }
