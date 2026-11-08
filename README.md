@@ -93,6 +93,15 @@ The controller runs on Linux or macOS; the VPN client currently requires **Linux
 
 Administrators can use `./kinfold check-config -data controller-data -credential admin-peer.json` to check whether the authenticated controller has loaded the same configuration as a local snapshot of the state file. The credential must belong to a device that is still authorized. The command prints both configuration hashes and returns an error on mismatch or reachability failure. It does not prove that clients have already adopted the configuration.
 
+## Running as a service
+
+`packaging/systemd/` contains hardened units; installation steps are at the top of each file.
+
+- `kinfold-controller.service` runs `serve` as the dedicated system user `kinfold` with no capabilities, state in `/var/lib/kinfold-controller/state` (mode `0700`). Run administrative commands as the same user, e.g. `sudo -u kinfold kinfold allow -data /var/lib/kinfold-controller/state -from alice -to bob`.
+- `kinfold-client@.service` runs one client per credential: `kinfold-client@alice` reads `/var/lib/kinfold-client/alice/credential.json` and creates the interface `kf-alice` (instance names are therefore limited to 12 characters). It uses a dynamic user with only `CAP_NET_ADMIN` and access to `/dev/net/tun`; the credential directory stays writable for automatic certificate renewal.
+
+Both units restrict file system, kernel, device, address-family and system-call access (`systemd-analyze security` rates them 1.6 and 2.1, "OK"). They were verified under systemd 252 (Debian 12). Under the client unit `/proc/sys` is read-only, so IPv6 duplicate address detection stays enabled and a new ULA becomes usable about one second after the tunnel starts.
+
 ## Optional IPv6
 
 Before enabling, **update all clients and the controller**: older binaries with a strict JSON decoder may reject the additional fields. On the controller, configure a ULA `/64` that does not collide with other networks and unique device addresses:
@@ -227,7 +236,7 @@ After the first key issuance or migration, the controller state contains a new J
 - Waiting relay endpoints expire after 30 seconds. When a device reconnects for a peer, its previous session for that ordered pair (waiting or bridged) is closed and replaced, so a crash or a dropped NAT mapping no longer blocks the pair until TCP keepalive notices. Configuration changes close relay sessions without waiting for TLS close notifications.
 - Only communication between the explicitly assigned IPv4/IPv6 addresses works. IPv6 is limited to a ULA `/64`; multicast, NDP, jumbograms, forwarding to other subnets and internet exit nodes are not supported.
 - Server and device certificates are valid for at most one year and no longer than the CA; the CA is valid for ten years. Existing peer sessions are locally limited to the earliest expiry of the certificates used. With a wrong clock, time jumps, suspend or tampered clients this is not proof of a time-bound block; the relay does not enforce this expiry itself. Device certificates are renewed automatically by running clients; server certificates are renewed manually with `renew-server`; CA rotation is a manual procedure (see the operator guide). Changing the controller hostname currently requires a new setup and redistribution of credentials.
-- The connection limits are not complete protection against resource abuse: an attacker with many source addresses can still exhaust the global connection limit, and bandwidth limiting is missing. No automatic backup, package installation, service management or hardened privilege separation.
+- The connection limits are not complete protection against resource abuse: an attacker with many source addresses can still exhaust the global connection limit, and bandwidth limiting is missing. No automatic backup or package installation; systemd units are provided but no distribution packages.
 
 ## Automatic device certificate renewal
 

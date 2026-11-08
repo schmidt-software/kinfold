@@ -313,3 +313,29 @@ the same moment get a lock error and retry, devices retry after 503. A
 renewal briefly reconnects all relay sessions because any change invalidates
 them (until #20). Stolen credentials can be renewed by the thief, which
 locks out the legitimate device and makes the theft visible.
+
+## D-016 — 2026-11-08 — active — Service units and privilege separation
+
+**Decision:** systemd units ship in `packaging/systemd/`. The controller
+runs as a dedicated system user `kinfold` without capabilities; the client
+runs per credential (`kinfold-client@<name>`) as a `DynamicUser` with only
+`CAP_NET_ADMIN` (ambient, so the `ip` helper inherits it) and
+`DeviceAllow=/dev/net/tun`. Both use `ProtectSystem=strict`, kernel and
+namespace protections, an address-family allow list and the
+`@system-service` system-call filter with `EPERM` for blocked calls.
+
+**Rationale:** Review finding O-02: the client ran as full root. A
+dedicated controller user (not `DynamicUser`) lets administrators run the
+state-changing CLI under the same identity, which the directory lock and
+the permission checks (review C-05) require. Blocked system calls return
+EPERM rather than killing the process, because the Go runtime probes some
+calls (e.g. `setrlimit`) at start-up.
+
+**Verification:** `systemd-analyze verify` clean; `systemd-analyze security`
+exposure 1.6 (controller) and 2.1 (client); both units started under
+systemd 252 in a container, the client created its TUN interface with its
+address.
+
+**Consequences:** IPv6 DAD cannot be disabled under the client unit
+(`ProtectKernelTunables`); accepted, see README. Instance names are limited
+to 12 characters by the interface name `kf-<name>`.
