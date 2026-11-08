@@ -356,9 +356,15 @@ No external Go modules are required. The Docker integration test needs the right
 
 ## License
 
-Kinfold is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+Copyright (C) 2026 Michael Schmidt (https://github.com/schmidt-software)
 
-- **Noncommercial use is free:** personal use, hobby projects, private study and research, and use by charities, educational institutions, public research organisations and government bodies, as defined in the license.
-- **Commercial use needs a commercial license.** This covers use by or for a business, in a commercial product or service, or for paid work for others. To get one, contact the licensor through [github.com/schmidt-software](https://github.com/schmidt-software). Opening an issue with the label `license` is enough to start.
+Kinfold is free software: you can redistribute it and/or modify it under the terms of the [GNU Affero General Public License version 3](LICENSE) as published by the Free Software Foundation (SPDX: `AGPL-3.0-only`). This applies to all versions published in this repository.
 
-The license also covers the versions published here before it was added (v0.1-copilot to v0.5.0-alpha).
+Kinfold is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+In short:
+- You may use, study, change and share Kinfold, privately and commercially.
+- If you distribute it, or a changed version, you must pass on the source code under the same license.
+- If you run a **changed** version as a network service, for example a modified controller that others connect to, you must offer its users the source code of your version (section 13 of the license).
+
+Organisations that cannot meet these conditions can ask the copyright holder for a separate commercial license through an issue labelled `license`.
