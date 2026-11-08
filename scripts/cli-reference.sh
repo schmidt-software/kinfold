@@ -15,7 +15,8 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-git -C "$root" worktree add --detach "$work/src" "$ref" >/dev/null 2>&1
+git -C "$root" worktree add --detach "$work/src" "$ref" >/dev/null 2>&1 ||
+  { echo "cannot check out $ref" >&2; exit 1; }
 (cd "$work/src" && CGO_ENABLED=0 go build -o "$work/bin" .)
 
 echo '```text'
