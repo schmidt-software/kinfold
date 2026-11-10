@@ -30,7 +30,7 @@ func TestLoadStateValidatesControllerPKI(t *testing.T) {
 		{"mismatched server key", func(s *State) { s.ServerKey = other.ServerKey }, "server certificate and private key"},
 		{"foreign server", func(s *State) { s.ServerCert, s.ServerKey = other.ServerCert, other.ServerKey }, "server certificate verification"},
 		{"wrong server name", func(s *State) { s.Server = "example.invalid:8443" }, "server certificate verification"},
-		{"invalid port", func(s *State) { s.Server = "localhost:0" }, "invalid controller port"},
+		{"invalid port", func(s *State) { s.Server = "localhost:0" }, "server port must be between 1 and 65535"},
 		{"foreign peer", func(s *State) { s.Config.Peers[0].Cert = other.Config.Peers[0].Cert; s.UsedPeerKeys = nil }, "not signed by the controller CA"},
 	}
 	dir := privateTempDir(t)
