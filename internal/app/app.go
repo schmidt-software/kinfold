@@ -700,7 +700,9 @@ func Run(args []string) error {
 			if *standbyMaxAge <= 0 {
 				return fmt.Errorf("-standby-max-age must be positive")
 			}
-			for _, warning := range cred.CertificateWarnings(time.Now(), 30*24*time.Hour) {
+			// Before the first replication, so an expired credential is
+			// named even when that fails.
+			for _, warning := range cred.CertificateWarnings(time.Now(), certificateWarningWindow) {
 				slog.Warn(warning + "; renew with replica-remove and replica-add on the primary")
 			}
 			if rep, err = prepareStandby(ctx, cred, *dir, *standbyMaxAge); err != nil {
@@ -769,15 +771,29 @@ func Run(args []string) error {
 			slog.Info("running as standby", "primary", replica.Primary, "address", replica.Address)
 		}
 		server := newControllerServer(handler, tlsCfg, defaultServerTimeouts)
-		for _, warning := range s.CertificateWarnings(time.Now(), 30*24*time.Hour) {
-			slog.Warn(warning)
+		var warned time.Time
+		warnCertificates := func(s *core.State) {
+			startup := warned.IsZero()
+			if !warningsDue(&warned, time.Now()) {
+				return
+			}
+			for _, warning := range s.CertificateWarnings(time.Now(), certificateWarningWindow) {
+				slog.Warn(warning)
+			}
+			if replica != nil && !startup { // already logged above at startup
+				for _, warning := range replica.CertificateWarnings(time.Now(), certificateWarningWindow) {
+					slog.Warn(warning + "; renew with replica-remove and replica-add on the primary")
+				}
+			}
 		}
+		warnCertificates(s)
 		slog.Info("controller listening", "address", ln.Addr().String(), "build", readBuildInfo().short(), "peers", len(s.Config.Peers))
 		return serveController(ctx, server, ln, handler, func(ctx context.Context) {
 			handler.Watch(ctx.Done(), s, func() (*core.State, error) {
 				next, err := loadServed(*dir)
 				if err == nil {
 					tokens.update(next)
+					warnCertificates(next)
 				}
 				return next, err
 			}, time.Second)
@@ -1175,6 +1191,23 @@ func Run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q; run 'kinfold help'", args[0])
 	}
+}
+
+// A controller runs for months: certificate expiry warnings are repeated
+// daily instead of being logged at startup only (D-041).
+const (
+	certificateWarningWindow   = 30 * 24 * time.Hour
+	certificateWarningInterval = 24 * time.Hour
+)
+
+// warningsDue reports whether the interval since *last has passed, and
+// then records now as the time of the warnings.
+func warningsDue(last *time.Time, now time.Time) bool {
+	if now.Sub(*last) < certificateWarningInterval {
+		return false
+	}
+	*last = now
+	return true
 }
 
 func noArgs(f *flag.FlagSet) error {

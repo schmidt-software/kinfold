@@ -72,9 +72,11 @@ for certificate warnings.
 | Device | 1 year, at most until CA expiry | Automatic in `run` once < 1/3 remains; `kinfold renew` once. |
 | Standby (replication and server) | 1 year, at most until CA expiry | `replica-remove` and `replica-add` on the primary, then restart the standby with the new credential. |
 
-`serve` logs a warning at startup for every certificate that is expired or
-expires within 30 days, including registered standbys; a standby also warns
-about its own credential. Device renewals are logged on both sides
+`serve` logs a warning at startup, and then once a day while it runs, for
+every certificate that is expired or expires within 30 days, including
+registered standbys; a standby also warns about its own credential. Alert
+on these messages: an expired controller certificate closes the relay and
+with it every tunnel. Device renewals are logged on both sides
 (`device certificate renewed`).
 
 ## Moving the controller to a new address
