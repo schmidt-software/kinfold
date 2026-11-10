@@ -366,15 +366,11 @@ func (s *State) CertificateWarnings(now time.Time, window time.Duration) []strin
 			warnings = append(warnings, w)
 		}
 	}
-	if block, _ := pem.Decode(s.CA); block != nil {
-		if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
-			check("CA", cert)
-		}
+	if cert, err := ParseCertPEM(s.CA); err == nil {
+		check("CA", cert)
 	}
-	if block, _ := pem.Decode(s.ServerCert); block != nil {
-		if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
-			check("controller", cert)
-		}
+	if cert, err := ParseCertPEM(s.ServerCert); err == nil {
+		check("controller", cert)
 	}
 	for _, peer := range s.Config.Peers {
 		if cert, err := ParseCert(peer.Cert); err == nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -78,6 +79,15 @@ func ParseCert(der []byte) (*x509.Certificate, error) {
 		return nil, fmt.Errorf("invalid certificate: %w", err)
 	}
 	return cert, nil
+}
+
+// ParseCertPEM parses the first PEM block of data as a certificate.
+func ParseCertPEM(data []byte) (*x509.Certificate, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("certificate is not PEM")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 func (c Config) Validate() error {

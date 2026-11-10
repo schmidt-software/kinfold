@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
 	"net"
 	"strings"
@@ -46,14 +45,12 @@ func (c ReplicaCredential) CertificateWarnings(now time.Time, window time.Durati
 		name string
 		pem  []byte
 	}{{"standby replication", c.Cert}, {"standby server", c.ServerCert}} {
-		if block, _ := pem.Decode(item.pem); block != nil {
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				continue
-			}
-			if w := expiryWarning(item.name, cert, now, window); w != "" {
-				warnings = append(warnings, w)
-			}
+		cert, err := ParseCertPEM(item.pem)
+		if err != nil {
+			continue
+		}
+		if w := expiryWarning(item.name, cert, now, window); w != "" {
+			warnings = append(warnings, w)
 		}
 	}
 	return warnings
