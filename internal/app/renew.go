@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -58,11 +57,11 @@ func controllerRenewer(dir string, now func() time.Time) relay.Renewer {
 }
 
 func credentialCertificate(cred core.Credential) (*x509.Certificate, error) {
-	block, _ := pem.Decode(cred.Cert)
-	if block == nil {
-		return nil, fmt.Errorf("credential certificate is not PEM")
+	cert, err := core.ParseCertPEM(cred.Cert)
+	if err != nil {
+		return nil, fmt.Errorf("credential: %w", err)
 	}
-	return x509.ParseCertificate(block.Bytes)
+	return cert, nil
 }
 
 // checkWritable fails early if the credential cannot be replaced, before
@@ -352,13 +351,9 @@ func controllerEnroller(dir string, now func() time.Time, cache *tokenCache) rel
 
 // caFingerprint returns the SHA-256 fingerprint of the controller CA.
 func caFingerprint(s *core.State) (string, error) {
-	block, _ := pem.Decode(s.CA)
-	if block == nil {
-		return "", fmt.Errorf("invalid CA certificate")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
+	cert, err := core.ParseCertPEM(s.CA)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("CA certificate: %w", err)
 	}
 	return core.Fingerprint(cert), nil
 }

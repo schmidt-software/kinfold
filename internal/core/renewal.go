@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"time"
@@ -112,13 +111,9 @@ const minRenewalGain = 7 * 24 * time.Hour
 
 // peerCertificateExpiry is the NotAfter a peer certificate issued now gets.
 func (s *State) peerCertificateExpiry(now time.Time) (time.Time, error) {
-	block, _ := pem.Decode(s.CA)
-	if block == nil {
-		return time.Time{}, errors.New("invalid CA certificate")
-	}
-	ca, err := x509.ParseCertificate(block.Bytes)
+	ca, err := ParseCertPEM(s.CA)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, fmt.Errorf("CA certificate: %w", err)
 	}
 	expires := now.AddDate(1, 0, 0)
 	if ca.NotAfter.Before(expires) {
