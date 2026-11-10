@@ -8,5 +8,5 @@ import (
 )
 
 func OpenTunnel(name string, addresses []string) (io.ReadWriteCloser, error) {
-	return nil, errors.New("TUN client is currently supported only on Linux")
+	return nil, errors.New("TUN client is supported only on Linux and macOS")
 }
