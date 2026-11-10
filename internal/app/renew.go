@@ -262,15 +262,10 @@ type tokenCache struct {
 type fileStamp struct {
 	mod  time.Time
 	size int64
-	ino  uint64
 }
 
 func stampOf(info os.FileInfo) fileStamp {
-	s := fileStamp{mod: info.ModTime(), size: info.Size()}
-	if st, ok := info.Sys().(interface{ Ino() uint64 }); ok {
-		s.ino = st.Ino()
-	}
-	return s
+	return fileStamp{mod: info.ModTime(), size: info.Size()}
 }
 
 func newTokenCache(dir string, s *core.State) *tokenCache {
