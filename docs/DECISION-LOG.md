@@ -1022,3 +1022,25 @@ CI. The job pulls `alpine/socat:latest` from a public registry, so a
 registry outage or a changed image can fail CI without a code change; pin
 the image by digest if that happens. The macOS tunnel is still outside CI
 (D-029).
+
+## D-045 — 2026-11-10 — active — Bounded failed-attempt table in the relay
+
+**Decision:** The relay's table of failed renewal and enrollment attempts
+holds at most 4096 entries and drops expired entries at most once a
+second (#145). While the table is full, callers that are not in it are
+refused with 429 as well, until entries expire.
+
+**Rationale:** `/enroll` is reachable without a certificate, and each
+failed attempt adds its source (an IPv4 address or an IPv6 /64). The
+table had no bound, and every request walked all of it while holding the
+relay lock that configuration fetches need. A caller with many source
+addresses could grow it and slow the whole controller down; one walk over
+100,000 entries took 0.8 ms. 4096 entries are far more than 32 devices and
+their administrators produce, and a walk over them takes about 0.1 ms once
+a second. Refusing unknown callers while the table is full follows the
+project rule that an overloaded or ambiguous state denies.
+
+**Consequences:** During such a flood, new enrollments and renewals are
+answered 429 until entries expire (30 s). Renewals retry on their own;
+an enrollment has to be repeated. Configuration fetches and relay
+sessions are not affected.
