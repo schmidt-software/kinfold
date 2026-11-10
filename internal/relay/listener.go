@@ -3,9 +3,10 @@ package relay
 import (
 	"fmt"
 	"net"
-	"net/netip"
 	"sync"
 	"time"
+
+	"github.com/schmidt-software/kinfold/internal/core"
 )
 
 // ListenerLimits bounds the TCP connections the controller accepts. All
@@ -207,20 +208,7 @@ func remoteIP(conn net.Conn) string {
 	} else {
 		return conn.RemoteAddr().String()
 	}
-	return sourceKey(host)
-}
-
-func sourceKey(host string) string {
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return host
-	}
-	addr = addr.Unmap()
-	if addr.Is4() {
-		return addr.String()
-	}
-	prefix, _ := addr.WithZone("").Prefix(64)
-	return prefix.String()
+	return core.SourceKey(host)
 }
 
 type limitedConn struct {

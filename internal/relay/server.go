@@ -550,7 +550,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
 	// Throttle per IPv4 address or IPv6 /64, like the listener limits
 	// (v0.3 review finding 1).
-	source := "enroll:" + sourceKey(host)
+	source := "enroll:" + core.SourceKey(host)
 	if s.renewalBlocked(source) {
 		w.Header().Set("Retry-After", "30")
 		s.reject(w, "enrollment recently failed; retry later", http.StatusTooManyRequests)
