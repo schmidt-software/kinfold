@@ -940,3 +940,23 @@ the copyright holder. The inbound grant keeps dual licensing possible.
 **Consequences:** Commercial use is allowed under the AGPL's conditions.
 A commercial license is only needed by those who cannot or will not meet
 them. Kinfold is now open source in the OSI sense.
+
+## D-041 — 2026-11-10 — active — Daily certificate expiry warnings
+
+**Decision:** A running controller repeats its certificate expiry warnings
+(CA, controller, devices, standbys and a standby's own credential) once
+every 24 hours, from the state it has just reloaded, instead of logging
+them at startup only (#121). The 30-day window is unchanged. No expiry
+metric is added on the controller for now.
+
+**Rationale:** The repository audit of 2026-11-10 found that a controller
+running for more than 30 days never warned: one year after `init` the
+server certificate expired, the watcher refused the state, the relay
+closed and every client closed its tunnel. The watcher already loads the
+state every second, so the daily check costs nothing extra and also
+covers certificates changed while the controller runs. A metric would be
+a second interface to document and keep stable; the log message is the
+one operators are already told to watch (docs/OPERATIONS.md).
+
+**Consequences:** Operators get up to 30 daily warnings before an outage.
+Renewal of the controller certificate stays manual (`renew-server`).
