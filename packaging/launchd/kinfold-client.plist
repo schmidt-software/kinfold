@@ -14,6 +14,11 @@
     sudo launchctl print system/kinfold-client
     tail -f /var/log/kinfold-client.log
 
+  The log file is not rotated. It grows with events (connections, peers
+  going offline, renewals), not with time. To empty it while the client
+  keeps running (launchd opens it in append mode, so this is safe):
+    sudo sh -c ': > /var/log/kinfold-client.log'
+
   Remove:
     sudo launchctl bootout system/kinfold-client
     sudo rm /Library/LaunchDaemons/kinfold-client.plist
