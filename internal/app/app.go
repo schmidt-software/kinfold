@@ -77,10 +77,7 @@ func Run(args []string) error {
 		f := flags("renew-server")
 		dir := f.String("data", "controller-data", "controller data directory")
 		server := f.String("server", "", "move the controller to this new host:port (devices need the new address in their credential)")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		lock, err := core.LockState(*dir)
@@ -113,10 +110,7 @@ func Run(args []string) error {
 		f := flags("ipv6-network")
 		dir := f.String("data", "controller-data", "controller data directory")
 		network := f.String("network", "", "IPv6 ULA /64 prefix, or 'none' to disable")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *network == "" {
@@ -147,10 +141,7 @@ func Run(args []string) error {
 		dir := f.String("data", "controller-data", "controller data directory")
 		id := f.String("id", "", "peer ID")
 		address := f.String("ip", "", "IPv6 address, or 'none' to remove")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *id == "" || *address == "" {
@@ -190,10 +181,7 @@ func Run(args []string) error {
 		f := flags("check-config")
 		dir := f.String("data", "controller-data", "controller data directory")
 		path := f.String("credential", "", "authorized peer credential file")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *path == "" {
@@ -242,10 +230,7 @@ func Run(args []string) error {
 		f := flags("service-apply")
 		dir := f.String("data", "controller-data", "controller data directory")
 		path := f.String("rules", "", "JSON file containing the complete service policy")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *path == "" {
@@ -287,10 +272,7 @@ func Run(args []string) error {
 	case "service-enable":
 		f := flags("service-enable")
 		dir := f.String("data", "controller-data", "controller data directory")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		s, lock, err := loadWritableState(*dir)
@@ -317,10 +299,7 @@ func Run(args []string) error {
 		to := f.String("to", "", "destination peer ID")
 		protocol := f.String("protocol", "", "tcp, udp, icmp or icmp6")
 		port := f.Uint("port", 0, "destination port for tcp or udp")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *port > 65535 {
@@ -342,10 +321,7 @@ func Run(args []string) error {
 	case "policy-enable":
 		f := flags("policy-enable")
 		dir := f.String("data", "controller-data", "controller data directory")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		s, lock, err := loadWritableState(*dir)
@@ -367,10 +343,7 @@ func Run(args []string) error {
 		dir := f.String("data", "controller-data", "controller data directory")
 		from := f.String("from", "", "source peer ID")
 		to := f.String("to", "", "destination peer ID")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		s, lock, err := loadWritableState(*dir)
@@ -391,10 +364,7 @@ func Run(args []string) error {
 		id := f.String("id", "", "device ID")
 		keyPath := f.String("key", "", "new private key file")
 		requestPath := f.String("request", "", "new enrollment request file")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *id == "" || *keyPath == "" || *requestPath == "" || *keyPath == *requestPath {
@@ -419,10 +389,7 @@ func Run(args []string) error {
 		ip := f.String("ip", "", "approved IPv4 address")
 		requestPath := f.String("request", "", "device enrollment request")
 		out := f.String("out", "", "new signed certificate file")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *id == "" || *requestPath == "" || *out == "" || (args[0] == "approve" && *ip == "") {
@@ -470,10 +437,7 @@ func Run(args []string) error {
 		f := flags("export-ca")
 		dir := f.String("data", "controller-data", "controller data directory")
 		out := f.String("out", "", "new public CA certificate file")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *out == "" {
@@ -495,10 +459,7 @@ func Run(args []string) error {
 		certPath := f.String("cert", "", "approved certificate file")
 		caPath := f.String("ca", "", "independently verified CA certificate file")
 		out := f.String("out", "", "new private credential file")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *server == "" || *keyPath == "" || *certPath == "" || *caPath == "" || *out == "" {
@@ -537,10 +498,7 @@ func Run(args []string) error {
 		dir := f.String("data", "controller-data", "new controller data directory")
 		server := f.String("server", "", "public controller host:port used by clients")
 		network := f.String("network", "10.77.0.0/24", "canonical IPv4 network")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *server == "" {
@@ -557,10 +515,7 @@ func Run(args []string) error {
 		id := f.String("id", "", "unique peer ID")
 		ip := f.String("ip", "", "peer IPv4 address")
 		out := f.String("out", "", "new credential file (transfer securely)")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *id == "" || *ip == "" || *out == "" {
@@ -595,10 +550,7 @@ func Run(args []string) error {
 		f := flags("remove-peer")
 		dir := f.String("data", "controller-data", "controller data directory")
 		id := f.String("id", "", "peer ID to revoke")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		lock, err := core.LockState(*dir)
@@ -660,10 +612,7 @@ func Run(args []string) error {
 		standbyCred := f.String("standby", "", "run as read-only standby replicating from the primary named in this replica credential")
 		standbyMaxAge := f.Duration("standby-max-age", defaultStandbyMaxAge, "standby: stop serving devices when the state could not be replicated for this long")
 		logging := addLogFlags(f)
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if err := logging.configure(); err != nil {
@@ -814,10 +763,7 @@ func Run(args []string) error {
 			directDial = f.Bool("direct-dial", true, "dial peers that accept direct sessions before falling back to the relay")
 			logging = addLogFlags(f)
 		}
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *path == "" {
@@ -910,10 +856,7 @@ func Run(args []string) error {
 	case "renew":
 		f := flags("renew")
 		path := f.String("credential", "", "private peer credential file to renew in place")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *path == "" {
@@ -954,10 +897,7 @@ func Run(args []string) error {
 		id := f.String("id", "", "device ID the token enrolls")
 		ip := f.String("ip", "", "IPv4 address the device receives")
 		ttl := f.Duration("ttl", core.DefaultTokenTTL, "token lifetime (at most 168h)")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *id == "" || *ip == "" {
@@ -986,10 +926,7 @@ func Run(args []string) error {
 	case "token-list":
 		f := flags("token-list")
 		dir := f.String("data", "controller-data", "controller data directory")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		s, err := core.LoadState(*dir)
@@ -1008,10 +945,7 @@ func Run(args []string) error {
 		f := flags("token-revoke")
 		dir := f.String("data", "controller-data", "controller data directory")
 		id := f.String("id", "", "device ID whose pending token to revoke")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		s, lock, err := loadWritableState(*dir)
@@ -1034,10 +968,7 @@ func Run(args []string) error {
 		id := f.String("id", "", "device ID the token was issued for")
 		tokenFile := f.String("token-file", "", "file containing the single-use enrollment token, or - for standard input")
 		out := f.String("out", "", "new private credential file")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *server == "" || *fp == "" || *id == "" || *tokenFile == "" || *out == "" {
@@ -1065,10 +996,7 @@ func Run(args []string) error {
 	case "seen-reset":
 		f := flags("seen-reset")
 		path := f.String("credential", "", "credential whose configuration watermark to reset")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *path == "" {
@@ -1085,10 +1013,7 @@ func Run(args []string) error {
 		id := f.String("id", "", "replica ID")
 		address := f.String("address", "", "host:port devices use to reach the standby")
 		out := f.String("out", "", "new replica credential file (contains private keys)")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *id == "" || *address == "" || *out == "" {
@@ -1122,10 +1047,7 @@ func Run(args []string) error {
 		f := flags("replica-remove")
 		dir := f.String("data", "controller-data", "controller data directory")
 		id := f.String("id", "", "replica ID")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		s, lock, err := loadWritableState(*dir)
@@ -1145,10 +1067,7 @@ func Run(args []string) error {
 		f := flags("replica-promote")
 		dir := f.String("data", "controller-data", "standby data directory")
 		credPath := f.String("standby", "", "replica credential of this standby")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		if *credPath == "" {
@@ -1180,10 +1099,7 @@ func Run(args []string) error {
 		return nil
 	case "version":
 		f := flags("version")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := noArgs(f); err != nil {
+		if err := parse(f, args[1:]); err != nil {
 			return err
 		}
 		printVersion(os.Stdout, readBuildInfo())
@@ -1220,7 +1136,11 @@ func sourceBurst(maxPerIP int) int {
 	return maxPerIP
 }
 
-func noArgs(f *flag.FlagSet) error {
+// parse reads a command's flags and refuses stray arguments.
+func parse(f *flag.FlagSet, args []string) error {
+	if err := f.Parse(args); err != nil {
+		return err
+	}
 	if f.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %v", f.Args())
 	}
