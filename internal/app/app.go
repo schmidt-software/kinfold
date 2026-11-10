@@ -749,7 +749,7 @@ func Run(args []string) error {
 			slog.Info("relay bandwidth limited per device", "bytes_per_second", limit.Rate, "burst", limit.Burst)
 		}
 		rejected := handler.Metrics().Counter("kinfold_listener_rejected_total", "Connections closed by per-source limits.", nil)
-		limits := relay.ListenerLimits{Total: *maxConns, PerSource: *maxPerIP, RatePerSource: *ratePerIP, BurstPerSource: max(*maxPerIP, 1), OnReject: rejected.Inc}
+		limits := relay.ListenerLimits{Total: *maxConns, PerSource: *maxPerIP, RatePerSource: *ratePerIP, BurstPerSource: sourceBurst(*maxPerIP), OnReject: rejected.Inc}
 		handler.Metrics().GaugeFunc("kinfold_build_info", "Build information.", metrics.Labels{"version": Version}, func() float64 { return 1 })
 		if *metricsAddr != "" {
 			addr, err := metrics.Serve(*metricsAddr, handler.Metrics(), ctx.Done())
@@ -1208,6 +1208,16 @@ func warningsDue(last *time.Time, now time.Time) bool {
 	}
 	*last = now
 	return true
+}
+
+// sourceBurst is the connection burst one source may open at once: its
+// concurrent limit, or the default when that limit is disabled, so that
+// -max-conns-per-ip 0 does not make the rate limit stricter (#127).
+func sourceBurst(maxPerIP int) int {
+	if maxPerIP == 0 {
+		return relay.DefaultListenerLimits.BurstPerSource
+	}
+	return maxPerIP
 }
 
 func noArgs(f *flag.FlagSet) error {
