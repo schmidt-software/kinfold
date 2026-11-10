@@ -75,7 +75,6 @@ func NewState(address, network string) (*State, error) {
 	if err := ValidateServerAddress(address); err != nil {
 		return nil, err
 	}
-	host, _, _ := net.SplitHostPort(address)
 	cfg := Config{Network: network, Policy: &Policy{}}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -98,38 +97,7 @@ func NewState(address, network string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	ca, err = x509.ParseCertificate(der)
-	if err != nil {
-		return nil, err
-	}
 	caKey, err := keyPEM(priv)
-	if err != nil {
-		return nil, err
-	}
-	serverPub, serverPriv, err := newKey()
-	if err != nil {
-		return nil, err
-	}
-	n, err = serial()
-	if err != nil {
-		return nil, err
-	}
-	server := &x509.Certificate{
-		SerialNumber: n, Subject: pkix.Name{CommonName: host},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.AddDate(1, 0, 0),
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		server.IPAddresses = []net.IP{ip}
-	} else {
-		server.DNSNames = []string{host}
-	}
-	serverDER, err := x509.CreateCertificate(rand.Reader, server, ca, serverPub, priv)
-	if err != nil {
-		return nil, err
-	}
-	serverKey, err := keyPEM(serverPriv)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +105,11 @@ func NewState(address, network string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &State{Server: address, CA: certPEM(der), CAKey: caKey, ServerCert: certPEM(serverDER), ServerKey: serverKey, Config: cfg, ConfigKey: configKey}, nil
+	s := &State{Server: address, CA: certPEM(der), CAKey: caKey, Config: cfg, ConfigKey: configKey}
+	if err := s.issueServerCertificate(); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func (s *State) AddPeer(id, ip string) (Credential, error) {
@@ -326,14 +298,10 @@ func (s *State) validatePKI(renewServer bool) error {
 	if err != nil {
 		return fmt.Errorf("parse server certificate: %w", err)
 	}
-	host, port, err := net.SplitHostPort(s.Server)
-	if err != nil || host == "" || port == "" {
-		return fmt.Errorf("invalid controller address")
+	if err := ValidateServerAddress(s.Server); err != nil {
+		return err
 	}
-	portNumber, err := strconv.Atoi(port)
-	if err != nil || portNumber < 1 || portNumber > 65535 {
-		return fmt.Errorf("invalid controller port")
-	}
+	host, _, _ := net.SplitHostPort(s.Server)
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
 	if _, err := ca.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
