@@ -70,7 +70,8 @@ type Server struct {
 	lastSeen       map[string]time.Time    // peer ID -> last configuration fetch (D-036)
 	statusPeers    map[string]bool         // peers with status metric series
 	lease          time.Duration
-	renewFailures  map[string]time.Time // certificate fingerprint -> last failed renewal
+	renewFailures  map[string]time.Time // certificate fingerprint or enrollment source -> last failed attempt
+	renewPruned    time.Time            // last time expired renewFailures were dropped
 	renewInterval  time.Duration
 	pairingTimeout time.Duration
 	config         core.Config
@@ -311,17 +312,30 @@ func forceClose(conns ...net.Conn) {
 // device can collect a certificate whose response was lost right away.
 const defaultRenewalInterval = 30 * time.Second
 
+// maxRenewFailures bounds the failed-attempt table. Unauthenticated callers
+// of /enroll add to it, and it is read under the relay lock: without a
+// bound, many source addresses could grow it and slow every request down
+// (D-045). While it is full, unknown callers are refused as well.
+const maxRenewFailures = 4096
+
 func (s *Server) renewalBlocked(fingerprint string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
-	for fp, last := range s.renewFailures {
-		if now.Sub(last) >= s.renewInterval {
-			delete(s.renewFailures, fp)
+	// Dropping expired entries walks the table, so it runs at most once a
+	// second; the lookup below checks the time itself.
+	if now.Sub(s.renewPruned) >= time.Second {
+		for fp, last := range s.renewFailures {
+			if now.Sub(last) >= s.renewInterval {
+				delete(s.renewFailures, fp)
+			}
 		}
+		s.renewPruned = now
 	}
-	_, blocked := s.renewFailures[fingerprint]
-	return blocked
+	if last, ok := s.renewFailures[fingerprint]; ok && now.Sub(last) < s.renewInterval {
+		return true
+	}
+	return len(s.renewFailures) >= maxRenewFailures
 }
 
 func (s *Server) noteRenewalFailure(fingerprint string) {
@@ -329,6 +343,9 @@ func (s *Server) noteRenewalFailure(fingerprint string) {
 	defer s.mu.Unlock()
 	if s.renewFailures == nil {
 		s.renewFailures = make(map[string]time.Time)
+	}
+	if _, known := s.renewFailures[fingerprint]; !known && len(s.renewFailures) >= maxRenewFailures {
+		return // concurrent requests must not push the table past its bound
 	}
 	s.renewFailures[fingerprint] = time.Now()
 }
