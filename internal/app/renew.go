@@ -267,9 +267,7 @@ func stampOf(info os.FileInfo) fileStamp {
 
 func newTokenCache(dir string, s *core.State) *tokenCache {
 	c := &tokenCache{path: filepath.Join(dir, "state.json")}
-	if info, err := os.Stat(c.path); err == nil {
-		c.stamp = stampOf(info)
-	}
+	c.stamp = c.stat()
 	c.set(s)
 	return c
 }
@@ -282,13 +280,24 @@ func (c *tokenCache) set(s *core.State) {
 	c.hashes = m
 }
 
-// update records a state the caller has just loaded or written.
-func (c *tokenCache) update(s *core.State) {
+// stat returns the current stamp of the state file. Take it before loading
+// the state that is then passed to update: a stamp taken afterwards could
+// belong to a newer file, and the cache would treat the older token list as
+// current until the next reload.
+func (c *tokenCache) stat() fileStamp {
+	info, err := os.Stat(c.path)
+	if err != nil {
+		return fileStamp{}
+	}
+	return stampOf(info)
+}
+
+// update records a state the caller has loaded or written, with the stamp
+// the file had then.
+func (c *tokenCache) update(s *core.State, stamp fileStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if info, err := os.Stat(c.path); err == nil {
-		c.stamp = stampOf(info)
-	}
+	c.stamp = stamp
 	c.set(s)
 }
 
@@ -336,7 +345,7 @@ func controllerEnroller(dir string, now func() time.Time, cache *tokenCache) rel
 				return "", nil, fmt.Errorf("persist enrollment: %w", err)
 			}
 		}
-		cache.update(s)
+		cache.update(s, cache.stat()) // under the state lock: nobody else writes
 		return id, cert, nil
 	}
 }

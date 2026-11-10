@@ -53,9 +53,10 @@ func renewalController(t *testing.T, now func() time.Time) (dir, credPath string
 	go func() {
 		done <- serveController(ctx, server, ln, handler, func(ctx context.Context) {
 			handler.Watch(ctx.Done(), state, func() (*core.State, error) {
+				stamp := tokens.stat()
 				next, err := core.LoadState(dir)
 				if err == nil {
-					tokens.update(next)
+					tokens.update(next, stamp)
 				}
 				return next, err
 			}, 20*time.Millisecond)
