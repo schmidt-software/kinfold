@@ -155,7 +155,7 @@ func acceptDirect(ctx context.Context, ln net.Listener, cred core.Credential, lo
 			}
 			return
 		}
-		source := remoteHost(raw)
+		source := remoteSource(raw)
 		mu.Lock()
 		busy := perSource[source] >= maxPendingPerSource
 		if !busy {
@@ -249,10 +249,12 @@ func deliver(l *link, session net.Conn) bool {
 	}
 }
 
-func remoteHost(c net.Conn) string {
+// remoteSource is the key for the per-source handshake limit; IPv6 callers
+// count per /64, as on the controller (core.SourceKey).
+func remoteSource(c net.Conn) string {
 	host, _, err := net.SplitHostPort(c.RemoteAddr().String())
 	if err != nil {
 		return c.RemoteAddr().String()
 	}
-	return host
+	return core.SourceKey(host)
 }
