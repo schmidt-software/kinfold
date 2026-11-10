@@ -119,8 +119,8 @@ func TestAgentStopsOnTunnelWriteFailure(t *testing.T) {
 			receiver := &failingWriteTun{fakeTun: newFakeTun(), short: short}
 			senderDone := make(chan error, 1)
 			receiverDone := make(chan error, 1)
-			go func() { senderDone <- Run(ctx, alice, cfg, "alice", sender) }()
-			go func() { receiverDone <- Run(ctx, bob, cfg, "bob", receiver) }()
+			go func() { senderDone <- RunWithUpdates(ctx, alice, cfg, "alice", sender, nil) }()
+			go func() { receiverDone <- RunWithUpdates(ctx, bob, cfg, "bob", receiver, nil) }()
 			defer func() {
 				cancel()
 				select {

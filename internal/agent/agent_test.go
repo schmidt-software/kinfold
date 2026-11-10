@@ -32,14 +32,14 @@ func TestPacketValidationAndFraming(t *testing.T) {
 	if err := WritePacket(&b, p); err != nil {
 		t.Fatal(err)
 	}
-	roundTrip, err := ReadPacket(&b)
+	roundTrip, err := readPacketLimited(&b, 65535)
 	if err != nil || !bytes.Equal(roundTrip, p) {
 		t.Fatalf("framing round-trip: %x %v", roundTrip, err)
 	}
 	if err := WritePacket(&b, nil); err == nil {
 		t.Fatal("accepted empty packet")
 	}
-	if _, err := ReadPacket(bytes.NewReader([]byte{0, 3, 1})); err == nil {
+	if _, err := readPacketLimited(bytes.NewReader([]byte{0, 3, 1}), 65535); err == nil {
 		t.Fatal("accepted truncated packet")
 	}
 }
@@ -186,7 +186,7 @@ func TestRelayPeerTLSAndPinning(t *testing.T) {
 	defer second.c.Close()
 	msg := []byte{1, 2, 3, 4}
 	go func() { _ = WritePacket(first.c, msg) }()
-	read, err := ReadPacket(second.c)
+	read, err := readPacketLimited(second.c, 65535)
 	if err != nil || string(read) != string(msg) {
 		t.Fatalf("packet: %v %v", read, err)
 	}
@@ -209,7 +209,7 @@ func TestRelayPeerTLSAndPinning(t *testing.T) {
 		defer aliceRes.c.Close()
 		aliceRes.c.SetDeadline(time.Now().Add(time.Second))
 		_ = WritePacket(aliceRes.c, msg)
-		if _, err := ReadPacket(aliceRes.c); err == nil {
+		if _, err := readPacketLimited(aliceRes.c, 65535); err == nil {
 			t.Fatal("payload passed over a session with a pin mismatch")
 		}
 	}
@@ -273,8 +273,8 @@ func TestAgentsTransferAndRejectSpoofedPackets(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ta, tb := newFakeTun(), newFakeTun()
 	done := make(chan error, 2)
-	go func() { done <- Run(ctx, a, cfg, "alice", ta) }()
-	go func() { done <- Run(ctx, b, cfg, "bob", tb) }()
+	go func() { done <- RunWithUpdates(ctx, a, cfg, "alice", ta, nil) }()
+	go func() { done <- RunWithUpdates(ctx, b, cfg, "bob", tb, nil) }()
 	defer func() {
 		cancel()
 		for i := 0; i < 2; i++ {

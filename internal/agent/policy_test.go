@@ -11,8 +11,8 @@ func TestDirectionalPolicyBetweenAgents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a, b := newFakeTun(), newFakeTun()
 	done := make(chan error, 2)
-	go func() { done <- Run(ctx, alice, cfg, "alice", a) }()
-	go func() { done <- Run(ctx, bob, cfg, "bob", b) }()
+	go func() { done <- RunWithUpdates(ctx, alice, cfg, "alice", a, nil) }()
+	go func() { done <- RunWithUpdates(ctx, bob, cfg, "bob", b, nil) }()
 	defer func() {
 		cancel()
 		for i := 0; i < 2; i++ {

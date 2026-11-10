@@ -69,7 +69,7 @@ func TestJoinWithTokenEndToEnd(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if _, id, err := fetchAfterRenewal(ctx, cred); err != nil || id != "bob" {
+	if _, id, err := fetchAfterRenewalAt(ctx, "", cred); err != nil || id != "bob" {
 		t.Fatalf("enrolled credential not accepted: id=%q err=%v", id, err)
 	}
 	again := filepath.Join(t.TempDir(), "bob2.json")

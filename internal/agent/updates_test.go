@@ -34,7 +34,7 @@ func TestUpdatesApplyWithoutRecreatingTunnel(t *testing.T) {
 	updates := make(chan core.Config, 1)
 	done := make(chan error, 2)
 	go func() { done <- RunWithUpdates(ctx, a, cfg.ForPeer("alice"), "alice", ta, updates) }()
-	go func() { done <- Run(ctx, b, cfg.ForPeer("bob"), "bob", tb) }()
+	go func() { done <- RunWithUpdates(ctx, b, cfg.ForPeer("bob"), "bob", tb, nil) }()
 	defer func() {
 		cancel()
 		for i := 0; i < 2; i++ {

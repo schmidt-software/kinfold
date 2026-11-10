@@ -611,10 +611,6 @@ func WritePacket(w io.Writer, packet []byte) error {
 	return nil
 }
 
-func ReadPacket(r io.Reader) ([]byte, error) {
-	return readPacketLimited(r, 65535)
-}
-
 func readPacketLimited(r io.Reader, limit int) ([]byte, error) {
 	var header [2]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {

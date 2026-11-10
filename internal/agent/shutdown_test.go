@@ -48,7 +48,7 @@ func TestRunWaitsForTunnelCloseAndReportsFailure(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- Run(ctx, credential, state.Config, "alice", device) }()
+		go func() { done <- RunWithUpdates(ctx, credential, state.Config, "alice", device, nil) }()
 		cancel()
 		select {
 		case <-device.entered:
