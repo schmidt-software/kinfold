@@ -246,3 +246,36 @@ Findings, fixed in #117:
 
 A second review of the fixes found that `invalidate` and `invalidatePairs`
 did not end paused bridges either (L). They now call the same stop function.
+
+## Review before v0.6.1-alpha
+
+v0.6.1-alpha ships the eleven findings of a review of the whole code base
+at v0.6.0-alpha (#121 to #131): a controller certificate that expired
+without a warning on a long-running controller, `join` dropping its
+pending enrollment on any error text containing `403`, a grace period
+longer than documented, a connection burst of 1 with the per-source limit
+disabled, and seven duplications or dead code paths.
+
+An independent review of `v0.6.0-alpha..6b16899` checked every commit
+against its callers and the documentation. It found no correctness or
+security issue. It confirmed:
+- `/enroll` answers 403 only for an invalid token, so the pending
+  enrollment is removed in exactly that case;
+- the daily warning has no data race and does not log a standby's own
+  credential twice at startup;
+- the server certificate built by `init` is unchanged, and no existing
+  state file is newly refused;
+- pin, chain and role check of the relayed session are identical to
+  before;
+- the send queue has one producer and one consumer, and the byte counter
+  still excludes the length prefix.
+
+Finding, fixed in the release PR (#143):
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 1 | L | `TestSuperviseGraceCountsFromFetchStart` failed above 1 s although the correct code needs about 0.8 s; a stalled CI runner could fail it. | Bound raised to 1.15 s; the old logic cannot finish before 1.2 s. |
+
+The fix changes one bound in a test. It was checked by running the test
+against the old logic (fails) and the new one (passes) instead of a second
+review (D-043).

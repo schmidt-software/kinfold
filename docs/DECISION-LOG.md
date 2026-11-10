@@ -977,3 +977,26 @@ it cannot reach a controller, so the documented value has to hold.
 arrives 30 seconds or more after the outage began; with slow timeouts
 that is at most one fetch duration later, never a whole extra round. The
 lease (D-025) remains the upper bound.
+
+## D-043 — 2026-11-10 — active — v0.6.1-alpha as a patch release
+
+**Decision:** The eleven fixes from the code review of 2026-11-10 (#121 to
+#131) ship as `v0.6.1-alpha`, a patch release without new features. It
+follows the full release routine (independent review, fuzzing, release
+notes, both user guides) with two deliberate shortcuts:
+- The only review finding was a timing bound in a test. Its fix was
+  checked by running the test against the old and the new logic; no second
+  review agent was started for it.
+- The macOS smoke test was not repeated, because neither the macOS tunnel
+  code nor its packaging changed.
+
+**Rationale:** The owner asked for a release with these fixes. They change
+no protocol, state format or option, so the third version digit is the
+honest signal. The second review exists to catch bugs in fixes to
+production code; a changed test bound has none to hide. The macOS test
+needs the owner's terminal and sudo (D-029) and guards code that this
+release does not touch.
+
+**Consequences:** The changed send path (#131) is verified on Linux by the
+Docker integration test and on macOS only by the unit tests. If macOS
+traffic misbehaves after the update, run `scripts/macos-smoke.sh` first.
