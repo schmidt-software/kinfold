@@ -331,6 +331,7 @@ func (l *link) run(ctx context.Context, cred core.Credential, cfg *atomic.Pointe
 		}
 	}()
 	var backoff retryBackoff
+	failing := false  // the last connection attempt failed and was reported
 	var next net.Conn // a direct session accepted while another one was running
 	defer func() {
 		if next != nil {
@@ -348,10 +349,17 @@ func (l *link) run(ctx context.Context, cred core.Credential, cfg *atomic.Pointe
 			}
 		}
 		if err != nil {
-			if ctx.Err() == nil {
-				slog.Warn("peer connection failed", "peer", l.peer.ID, "error", err)
+			// An offline peer is retried for as long as it stays offline:
+			// report the first failure and keep the repeats at debug level,
+			// so the log does not grow with every attempt (D-046).
+			if ctx.Err() == nil && !failing {
+				slog.Warn("peer connection failed; retrying", "peer", l.peer.ID, "error", err)
+				failing = true
+			} else if ctx.Err() == nil {
+				slog.Debug("peer connection failed again", "peer", l.peer.ID, "error", err)
 			}
 		} else {
+			failing = false
 			slog.Info("peer connected", "peer", l.peer.ID, "path", path)
 			var writeErr *tunnelWriteError
 			next, err = l.runSession(ctx, cred, conn, path, localIP, device, writeMu, &backoff)

@@ -1044,3 +1044,28 @@ project rule that an overloaded or ambiguous state denies.
 answered 429 until entries expire (30 s). Renewals retry on their own;
 an enrollment has to be repeated. Configuration fetches and relay
 sessions are not affected.
+
+## D-046 — 2026-11-10 — active — Log an unreachable peer once, no log rotation for the macOS daemon
+
+**Decision:** The client logs a failed connection to a peer once per
+outage (`peer connection failed; retrying`); the repeated attempts are
+logged at debug level until the peer connects again (#147). The macOS
+launch daemon keeps writing to `/var/log/kinfold-client.log` without
+rotation; the plist documents how to empty the file while the client runs.
+
+**Rationale:** The audit found that the daemon's log file grows without
+bound. The cause was not the missing rotation but one warning per
+connection attempt for every offline peer, roughly one line per minute
+and peer, forever. An offline peer is a normal state, and the code base already
+reports other long-lasting states once (controller unreachable, failed
+tunnel start, replication). Shipping a `newsyslog` configuration, as the
+issue proposed, does not work: launchd holds the file open, `newsyslog`
+renames it and cannot make the client reopen it, so the client would keep
+writing to the rotated file. A test with a launch agent showed that
+launchd opens the file in append mode, so truncating it in place is safe.
+
+**Consequences:** The log grows with events instead of with time, on Linux
+(journal) as well as on macOS. Whether a peer is still unreachable is
+visible in the metric `kinfold_peer_connected` and at debug level, not in
+repeated warnings. A session that connects and drops again in a loop still
+logs each cycle.

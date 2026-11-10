@@ -240,4 +240,5 @@ Useful log messages (`-log-format json` makes them machine-readable):
 | standby | `standby stopped serving devices` | Replication failed for longer than `-standby-max-age`, or the primary removed the standby. |
 | client | `controller unreachable beyond grace period; tunnel closed` | Control path down for > 30 s. |
 | client | `certificate renewal failed; will retry` | Renewal will be retried every 10 minutes. |
+| client | `peer connection failed; retrying` | A peer cannot be reached (offline, no path). Logged once per outage; the retries continue with backoff and appear at `-log-level debug`. |
 | client | `peer disconnected` (repeated) | Path problems to that peer; sessions reconnect with backoff. |
