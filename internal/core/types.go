@@ -316,13 +316,23 @@ func writeJSON(path string, value any, syncParent func(string) error) error {
 	if err != nil {
 		return err
 	}
+	return writeFileAtomic(path, append(b, '\n'), syncParent)
+}
+
+// WriteFileAtomic replaces path with data through a same-directory rename
+// and synchronizes the file and its directory. The file has mode 0600.
+func WriteFileAtomic(path string, data []byte) error {
+	return writeFileAtomic(path, data, SyncParentDir)
+}
+
+func writeFileAtomic(path string, data []byte, syncParent func(string) error) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
 		return err
 	}
 	name := f.Name()
 	defer os.Remove(name)
-	if _, err := f.Write(append(b, '\n')); err != nil {
+	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
 	}

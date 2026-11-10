@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -351,30 +350,9 @@ func writeSeen(credential string, t time.Time) {
 	if t.IsZero() || !t.After(readSeen(credential)) {
 		return
 	}
-	if err := writeFileAtomic(seenPath(credential), []byte(t.UTC().Format(time.RFC3339Nano)+"\n")); err != nil {
+	if err := core.WriteFileAtomic(seenPath(credential), []byte(t.UTC().Format(time.RFC3339Nano)+"\n")); err != nil {
 		slog.Warn("could not persist configuration watermark", "error", err)
 	}
-}
-
-func writeFileAtomic(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	name := f.Name()
-	defer os.Remove(name)
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
 }
 
 // directOptions configures the direct path (D-026).
