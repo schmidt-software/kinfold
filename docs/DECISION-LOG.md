@@ -960,3 +960,20 @@ one operators are already told to watch (docs/OPERATIONS.md).
 
 **Consequences:** Operators get up to 30 daily warnings before an outage.
 Renewal of the controller certificate stays manual (`renew-server`).
+
+## D-042 — 2026-11-10 — active — Grace period counts from the start of the failed fetch
+
+**Decision:** The 30-second grace period of D-013 starts when the first
+failed configuration fetch was *started*, not when it returned (#123).
+
+**Rationale:** A fetch waits up to 10 seconds per controller. Counting
+from the first failed result, a silent controller kept the tunnel for
+about 46 seconds, and a primary with two standbys for more than a minute,
+although D-013 and the README promise 30. Since D-026 the grace period
+bounds how long a device uses an outdated policy on direct sessions when
+it cannot reach a controller, so the documented value has to hold.
+
+**Consequences:** The tunnel closes with the first failed result that
+arrives 30 seconds or more after the outage began; with slow timeouts
+that is at most one fetch duration later, never a whole extra round. The
+lease (D-025) remains the upper bound.
