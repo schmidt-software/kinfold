@@ -141,7 +141,8 @@ func TestSuperviseFailsClosedAfterGrace(t *testing.T) {
 // The grace period counts from the start of the first failed fetch, so a
 // controller that times out slowly does not extend it (#123). With 400 ms
 // fetches and 500 ms grace the tunnel closes with the second result
-// (~800 ms); counting from the first result it would take ~1200 ms.
+// (~800 ms); counting from the first result it cannot close before the
+// third (1200 ms), so any bound below that tells the two apart.
 func TestSuperviseGraceCountsFromFetchStart(t *testing.T) {
 	h, cred := newResilienceHarness(t)
 	h.delay = 400 * time.Millisecond
@@ -151,7 +152,7 @@ func TestSuperviseGraceCountsFromFetchStart(t *testing.T) {
 	h.set(func() { h.failing = true })
 	start := time.Now()
 	eventually(t, "fail closed after grace", func() bool { return h.stops.Load() == 1 })
-	if elapsed := time.Since(start); elapsed > time.Second {
+	if elapsed := time.Since(start); elapsed > 1150*time.Millisecond {
 		t.Fatalf("tunnel closed after %s; slow fetches extended the grace period", elapsed.Round(time.Millisecond))
 	}
 }
