@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -27,6 +28,10 @@ func NormalizeFingerprint(fp string) (string, error) {
 	}
 	return fp, nil
 }
+
+// ErrTokenRefused marks the controller's answer that it does not accept the
+// enrollment token (403): nothing was issued for the request.
+var ErrTokenRefused = errors.New("controller refused the enrollment token")
 
 // Join enrolls a device online with a single-use token. The controller is
 // authenticated before the token is sent: its certificate chain must
@@ -89,6 +94,9 @@ func Join(ctx context.Context, server, caFingerprint, token string, request []by
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRenewalResponseBytes+1))
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, nil, nil, fmt.Errorf("%w: %q: %q", ErrTokenRefused, resp.Status, bytes.TrimSpace(data))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, nil, fmt.Errorf("controller: %q: %q", resp.Status, bytes.TrimSpace(data))
