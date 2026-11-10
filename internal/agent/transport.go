@@ -451,26 +451,17 @@ func Connect(ctx context.Context, cred core.Credential, cfg core.Config, ownID s
 	expected := core.Fingerprint(peerCert)
 	roots := tlsCfg.RootCAs
 	var peerChain []*x509.Certificate
-	verify := func(cs tls.ConnectionState) error {
-		if len(cs.PeerCertificates) == 0 || core.Fingerprint(cs.PeerCertificates[0]) != expected {
-			return fmt.Errorf("peer certificate does not match authorized peer %s", peer.ID)
-		}
-		usage := x509.ExtKeyUsageServerAuth
-		if ownID > peer.ID {
-			usage = x509.ExtKeyUsageClientAuth
-		}
-		chains, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{usage}})
-		if err != nil {
-			return err
-		}
-		peerChain = chains[0]
-		return nil
+	// The device with the lower ID is the TLS client: it expects a server
+	// certificate from its peer, the other device a client certificate.
+	usage := x509.ExtKeyUsageServerAuth
+	if ownID > peer.ID {
+		usage = x509.ExtKeyUsageClientAuth
 	}
 	innerCfg := &tls.Config{
 		MinVersion:         tls.VersionTLS13,
 		Certificates:       tlsCfg.Certificates,
 		InsecureSkipVerify: true, // Certificate chain and exact peer pin are verified in VerifyConnection.
-		VerifyConnection:   verify,
+		VerifyConnection:   verifyPeer(roots, expected, usage, &peerChain),
 		ClientAuth:         tls.RequireAnyClientCert,
 	}
 	var conn *tls.Conn

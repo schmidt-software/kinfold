@@ -202,7 +202,7 @@ func TestRelayPeerTLSAndPinning(t *testing.T) {
 	if bobRes.c != nil {
 		bobRes.c.Close()
 	}
-	if bobRes.err == nil || !strings.Contains(bobRes.err.Error(), "does not match authorized peer alice") {
+	if bobRes.err == nil || !strings.Contains(bobRes.err.Error(), "does not match the authorized peer") {
 		t.Fatalf("bob did not reject the mismatched pin: %v", bobRes.err)
 	}
 	if aliceRes.c != nil {
