@@ -39,7 +39,9 @@ case "$arch" in
 esac
 cd "$root"
 go build -o "$work/kinfold-host" .
-GOOS=linux GOARCH="$arch" go build -o "$work/kinfold" .
+# Static binary: on a Linux host a cgo build would need glibc, which the
+# Alpine-based test image does not have.
+CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o "$work/kinfold" .
 "$work/kinfold-host" init -data "$work/state" -server controller:8443
 "$work/kinfold-host" keygen -id alice -key "$work/alice.key" -request "$work/alice.csr"
 "$work/kinfold-host" approve -data "$work/state" -id alice -ip 10.77.0.1 -request "$work/alice.csr" -out "$work/alice.crt"
