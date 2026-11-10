@@ -40,16 +40,11 @@ var DefaultListenerLimits = ListenerLimits{Total: 1152, PerSource: 128, RatePerS
 // addresses cannot grow it without limit (change review finding 4).
 const maxTrackedSources = 8192
 
-// LimitListener bounds accepted TCP connections, including TLS handshakes and
-// hijacked relay connections. Close unblocks an Accept waiting for capacity.
-func LimitListener(inner net.Listener, limit int) (net.Listener, error) {
-	return NewLimitedListener(inner, ListenerLimits{Total: limit})
-}
-
-// NewLimitedListener applies the given limits to inner. Connections over a
+// NewLimitedListener applies the given limits to inner; they cover TLS
+// handshakes and hijacked relay connections too. Connections over a
 // per-source limit are accepted and closed immediately, so one source cannot
 // fill the operating system backlog for everyone else; the global limit
-// makes Accept wait as before.
+// makes Accept wait, and Close unblocks an Accept waiting for capacity.
 func NewLimitedListener(inner net.Listener, limits ListenerLimits) (net.Listener, error) {
 	if inner == nil || limits.Total <= 0 {
 		return nil, fmt.Errorf("listener and positive connection limit required")

@@ -98,13 +98,8 @@ func packetAddresses(packet []byte) (netip.Addr, netip.Addr, error) {
 	return netip.AddrFrom4([4]byte(packet[12:16])), netip.AddrFrom4([4]byte(packet[16:20])), nil
 }
 
-// Run forwards only exact member-to-member IP traffic.
-func Run(ctx context.Context, cred core.Credential, cfg core.Config, ownID string, device io.ReadWriteCloser) error {
-	return RunWithUpdates(ctx, cred, cfg, ownID, device, nil)
-}
-
-// RunWithUpdates is Run with configuration updates applied in place. An
-// update must keep the device's own addresses (the supervisor recreates the
+// RunWithUpdates forwards only exact member-to-member IP traffic and applies
+// configuration updates in place (updates may be nil). An update must keep the device's own addresses (the supervisor recreates the
 // tunnel otherwise). Peer links whose authorization is unchanged keep their
 // sessions; changed links are restarted and removed links stopped, without
 // touching the TUN device (review R-09).

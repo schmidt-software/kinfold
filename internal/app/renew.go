@@ -200,12 +200,6 @@ func renewLoop(ctx context.Context, path string, cred core.Credential, client *a
 	}
 }
 
-// fetchAfterRenewal waits until the controller has reloaded the state with
-// the new certificate (the watcher polls about once per second).
-func fetchAfterRenewal(ctx context.Context, cred core.Credential) (core.Config, string, error) {
-	return fetchAfterRenewalAt(ctx, "", cred)
-}
-
 // fetchWithWatermark fetches the configuration once, honouring and updating
 // the rollback watermark persisted next to the credential at path.
 func fetchWithWatermark(ctx context.Context, path string, cred core.Credential) (core.Config, string, error) {
@@ -223,6 +217,9 @@ func fetchWithWatermark(ctx context.Context, path string, cred core.Credential) 
 	return cfg, id, err
 }
 
+// fetchAfterRenewalAt waits until the controller has reloaded the state
+// with the new certificate (the watcher polls about once per second). With
+// a credential path it honours and updates the rollback watermark there.
 func fetchAfterRenewalAt(ctx context.Context, path string, cred core.Credential) (core.Config, string, error) {
 	var lastErr error
 	for i := 0; i < 30; i++ {

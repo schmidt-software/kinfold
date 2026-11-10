@@ -111,7 +111,7 @@ func TestCertificateRenewalEndToEnd(t *testing.T) {
 	if info, err := os.Stat(credPath); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("credential mode after renewal: %v %v", info.Mode(), err)
 	}
-	if _, id, err := fetchAfterRenewal(ctx, renewed); err != nil || id != "alice" {
+	if _, id, err := fetchAfterRenewalAt(ctx, "", renewed); err != nil || id != "alice" {
 		t.Fatalf("renewed credential not accepted: id=%q err=%v", id, err)
 	}
 	if _, _, err := agent.FetchConfig(ctx, cred); err == nil || !strings.Contains(err.Error(), "403") {

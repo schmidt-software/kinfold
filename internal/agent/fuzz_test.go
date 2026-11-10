@@ -45,7 +45,7 @@ func FuzzPacketFraming(f *testing.F) {
 	f.Add([]byte{0, 4, 1})
 	f.Fuzz(func(t *testing.T, data []byte) {
 		reader := bytes.NewReader(data)
-		packet, err := ReadPacket(reader)
+		packet, err := readPacketLimited(reader, 65535)
 		if len(data) < 2 {
 			if err == nil {
 				t.Fatal("accepted missing frame header")

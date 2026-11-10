@@ -13,7 +13,7 @@ func TestLimitedListenerCapacityAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := LimitListener(raw, 1)
+	listener, err := NewLimitedListener(raw, ListenerLimits{Total: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestLimitedListenerCapacityAndClose(t *testing.T) {
 }
 
 func TestLimitListenerRejectsInvalidLimits(t *testing.T) {
-	if _, err := LimitListener(nil, 1); err == nil {
+	if _, err := NewLimitedListener(nil, ListenerLimits{Total: 1}); err == nil {
 		t.Fatal("accepted nil listener")
 	}
 	raw, err := net.Listen("tcp", "127.0.0.1:0")
@@ -83,7 +83,7 @@ func TestLimitListenerRejectsInvalidLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer raw.Close()
-	if _, err := LimitListener(raw, 0); err == nil {
+	if _, err := NewLimitedListener(raw, ListenerLimits{Total: 0}); err == nil {
 		t.Fatal("accepted zero limit")
 	}
 }
