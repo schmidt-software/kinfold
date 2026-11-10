@@ -25,7 +25,7 @@ func TestSessionEndsWhenPeerStopsReading(t *testing.T) {
 	left, right := net.Pipe() // right never reads: every write blocks
 	defer right.Close()
 	l := &link{peer: core.Peer{ID: "bob", IP: "10.77.0.2"}, queue: make(chan []byte, 1), allowOutgoing: true}
-	l.queue <- ipv4(1, 2)
+	l.queue <- framed(ipv4(1, 2))
 	var mu sync.Mutex
 	result := make(chan error, 1)
 	go func() {

@@ -29,14 +29,14 @@ func TestPacketValidationAndFraming(t *testing.T) {
 		}
 	}
 	var b bytes.Buffer
-	if err := WritePacket(&b, p); err != nil {
+	if err := writePacket(&b, p); err != nil {
 		t.Fatal(err)
 	}
 	roundTrip, err := readPacketLimited(&b, 65535)
 	if err != nil || !bytes.Equal(roundTrip, p) {
 		t.Fatalf("framing round-trip: %x %v", roundTrip, err)
 	}
-	if err := WritePacket(&b, nil); err == nil {
+	if err := writePacket(&b, nil); err == nil {
 		t.Fatal("accepted empty packet")
 	}
 	if _, err := readPacketLimited(bytes.NewReader([]byte{0, 3, 1}), 65535); err == nil {
@@ -54,7 +54,7 @@ func TestIncomingSpoofIsRejected(t *testing.T) {
 	go func() {
 		result <- l.session(context.Background(), left, netip.MustParseAddr("10.77.0.1"), &output, &mu)
 	}()
-	if err := WritePacket(right, ipv4(3, 1)); err != nil {
+	if err := writePacket(right, ipv4(3, 1)); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -146,7 +146,7 @@ func TestIncomingPolicyBlocksUnauthorizedPeer(t *testing.T) {
 	go func() {
 		result <- l.session(context.Background(), left, netip.MustParseAddr("10.77.0.1"), &output, &mu)
 	}()
-	if err := WritePacket(right, ipv4(2, 1)); err != nil {
+	if err := writePacket(right, ipv4(2, 1)); err != nil {
 		t.Fatal(err)
 	}
 	right.Close()
@@ -185,7 +185,7 @@ func TestRelayPeerTLSAndPinning(t *testing.T) {
 	defer first.c.Close()
 	defer second.c.Close()
 	msg := []byte{1, 2, 3, 4}
-	go func() { _ = WritePacket(first.c, msg) }()
+	go func() { _ = writePacket(first.c, msg) }()
 	read, err := readPacketLimited(second.c, 65535)
 	if err != nil || string(read) != string(msg) {
 		t.Fatalf("packet: %v %v", read, err)
@@ -208,7 +208,7 @@ func TestRelayPeerTLSAndPinning(t *testing.T) {
 	if aliceRes.c != nil {
 		defer aliceRes.c.Close()
 		aliceRes.c.SetDeadline(time.Now().Add(time.Second))
-		_ = WritePacket(aliceRes.c, msg)
+		_ = writePacket(aliceRes.c, msg)
 		if _, err := readPacketLimited(aliceRes.c, 65535); err == nil {
 			t.Fatal("payload passed over a session with a pin mismatch")
 		}
@@ -321,4 +321,22 @@ connected:
 	case <-time.After(3 * time.Second):
 		t.Fatal("return packet not delivered")
 	}
+}
+
+// writePacket frames and writes one packet as a session does.
+func writePacket(w io.Writer, packet []byte) error {
+	frame, err := framePacket(packet)
+	if err != nil {
+		return err
+	}
+	return writeFrame(w, frame)
+}
+
+// framed returns a valid packet as the frame the send queue holds.
+func framed(packet []byte) []byte {
+	frame, err := framePacket(packet)
+	if err != nil {
+		panic(err)
+	}
+	return frame
 }

@@ -28,8 +28,8 @@ type link struct {
 	dial      bool
 	endpoints func(peer string) []string
 	server    func() string // current controller for relay connections
-	// queue is the send queue of the running session; only that session
-	// reads it. outbox points to the same channel while a session is
+	// queue is the send queue of the running session and holds frames
+	// (framePacket); only that session reads it. outbox points to the same channel while a session is
 	// connected and is nil otherwise. Each session gets a fresh channel, so
 	// packets queued for an ended session are dropped with it instead of
 	// leaking into the next one (review A-06).
@@ -289,9 +289,15 @@ func RunWithUpdates(ctx context.Context, cred core.Credential, cfg core.Config, 
 			droppedNoRoute.Inc()
 			continue
 		}
-		clone := append([]byte(nil), packet...)
+		// The read buffer is reused, so the packet is copied once, straight
+		// into the frame the session writes.
+		frame, err := framePacket(packet)
+		if err != nil {
+			droppedMTU.Inc()
+			continue
+		}
 		select {
-		case *outbox <- clone:
+		case *outbox <- frame:
 		default:
 			droppedQueue.Inc()
 			slog.Debug("peer queue full; packet dropped", "peer", l.peer.ID)
@@ -553,13 +559,13 @@ func (l *link) session(ctx context.Context, conn net.Conn, localIP netip.Addr, d
 	go func() {
 		for {
 			select {
-			case packet := <-l.queue:
+			case frame := <-l.queue:
 				if err := conn.SetWriteDeadline(time.Now().Add(peerWriteTimeout)); err != nil {
 					done <- err
 					return
 				}
-				tx.Add(uint64(len(packet)))
-				if err := WritePacket(conn, packet); err != nil {
+				tx.Add(uint64(len(frame) - 2)) // packet bytes, without the length prefix
+				if err := writeFrame(conn, frame); err != nil {
 					done <- err
 					return
 				}
