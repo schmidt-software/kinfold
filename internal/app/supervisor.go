@@ -115,6 +115,7 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 		}
 	}()
 	var failingSince time.Time // zero while the controller answers
+	var fetchStarted time.Time
 	startFailed := false
 	for {
 		select {
@@ -148,6 +149,7 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 			cancelFetch = stopFetch
 			results := make(chan fetchResult, 1)
 			fetched = results
+			fetchStarted = time.Now()
 			go func() {
 				cfg, id, err := fetch(fetchCtx, cred)
 				results <- fetchResult{cfg, id, err}
@@ -177,7 +179,10 @@ func supervise(ctx context.Context, cred core.Credential, iface string, initial 
 				reachable.Set(0)
 				now := time.Now()
 				if failingSince.IsZero() {
-					failingSince = now
+					// The outage began when this fetch started, not when it
+					// timed out; otherwise slow failures extend the grace
+					// period by a fetch duration (D-042).
+					failingSince = fetchStarted
 					slog.Warn("controller refresh failed; keeping tunnel during grace period", "error", err, "grace", grace)
 				}
 				if cancel != nil && now.Sub(failingSince) >= grace {
