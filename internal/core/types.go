@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -106,12 +107,7 @@ func (c Config) Validate() error {
 		if !ValidID(p.ID) || err != nil || !ip.Is4() || !prefix.Contains(ip) {
 			return fmt.Errorf("invalid peer %q or IP %q", p.ID, p.IP)
 		}
-		// Network and broadcast addresses are not usable by hosts.
-		b := prefix.Addr().As4()
-		base := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
-		a := ip.As4()
-		n := uint32(a[0])<<24 | uint32(a[1])<<16 | uint32(a[2])<<8 | uint32(a[3])
-		if n == base || n == base|(^uint32(0)>>prefix.Bits()) {
+		if networkOrBroadcast(prefix, ip) {
 			return fmt.Errorf("peer %s uses a network or broadcast address", p.ID)
 		}
 		if p.IPv6 != "" {
@@ -218,6 +214,14 @@ func (c *Config) SetRule(from, to string, allow bool) error {
 		}
 	}
 	return nil
+}
+
+// networkOrBroadcast reports whether ip is the network or the broadcast
+// address of the IPv4 prefix; hosts cannot use either.
+func networkOrBroadcast(prefix netip.Prefix, ip netip.Addr) bool {
+	b, a := prefix.Addr().As4(), ip.As4()
+	base, n := binary.BigEndian.Uint32(b[:]), binary.BigEndian.Uint32(a[:])
+	return n == base || n == base|(^uint32(0)>>prefix.Bits())
 }
 
 func withoutIndex[T any](items []T, index int) []T {

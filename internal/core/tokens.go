@@ -84,12 +84,7 @@ func (s *State) addressAvailable(ip string) error {
 	if err != nil || perr != nil || !addr.Is4() || addr.String() != ip || !prefix.Contains(addr) {
 		return fmt.Errorf("invalid IPv4 address %q for network %s", ip, s.Config.Network)
 	}
-	last := prefix.Addr().As4()
-	host := 32 - prefix.Bits()
-	n := uint32(last[0])<<24 | uint32(last[1])<<16 | uint32(last[2])<<8 | uint32(last[3])
-	a := addr.As4()
-	v := uint32(a[0])<<24 | uint32(a[1])<<16 | uint32(a[2])<<8 | uint32(a[3])
-	if v == n || v == n|(1<<host-1) {
+	if networkOrBroadcast(prefix, addr) {
 		return fmt.Errorf("%s is the network or broadcast address", ip)
 	}
 	for _, p := range s.Config.Peers {
