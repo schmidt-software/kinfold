@@ -51,3 +51,19 @@ func TestWriteJSONPersistsReplacement(t *testing.T) {
 		t.Fatalf("permissions: %v, %v", info, err)
 	}
 }
+
+func TestWriteFileAtomicReplacesPrivately(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watermark")
+	for _, want := range []string{"first\n", "second\n"} {
+		if err := WriteFileAtomic(path, []byte(want)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Fatalf("content %q, %v; want %q", got, err, want)
+		}
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+}

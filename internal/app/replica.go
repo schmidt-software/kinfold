@@ -290,7 +290,7 @@ func writeControllers(credential string, list []string) {
 	if len(list) == 0 || strings.Join(list, "\n") == strings.Join(readControllers(credential), "\n") {
 		return
 	}
-	if err := writeFileAtomic(controllersPath(credential), []byte(strings.Join(list, "\n")+"\n")); err != nil {
+	if err := core.WriteFileAtomic(controllersPath(credential), []byte(strings.Join(list, "\n")+"\n")); err != nil {
 		slog.Warn("could not persist the controller list", "error", err)
 	}
 }
