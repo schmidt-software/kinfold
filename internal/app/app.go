@@ -739,9 +739,10 @@ func Run(args []string) error {
 		slog.Info("controller listening", "address", ln.Addr().String(), "build", readBuildInfo().short(), "peers", len(s.Config.Peers))
 		return serveController(ctx, server, ln, handler, func(ctx context.Context) {
 			handler.Watch(ctx.Done(), s, func() (*core.State, error) {
+				stamp := tokens.stat()
 				next, err := loadServed(*dir)
 				if err == nil {
-					tokens.update(next)
+					tokens.update(next, stamp)
 					warnCertificates(next)
 				}
 				return next, err
