@@ -43,10 +43,10 @@ func TestIncomingServicePolicyEnforcedIndependently(t *testing.T) {
 				}
 				return p
 			}
-			if err := WritePacket(right, packet(22)); err != nil {
+			if err := writePacket(right, packet(22)); err != nil {
 				t.Fatal(err)
 			}
-			if err := WritePacket(right, packet(53)); err != nil {
+			if err := writePacket(right, packet(53)); err != nil {
 				t.Fatal(err)
 			}
 			select {

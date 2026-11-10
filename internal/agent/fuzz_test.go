@@ -66,7 +66,7 @@ func FuzzPacketFraming(f *testing.F) {
 			t.Fatal("read beyond the first frame")
 		}
 		var out bytes.Buffer
-		if err := WritePacket(&out, packet); err != nil {
+		if err := writePacket(&out, packet); err != nil {
 			t.Fatal(err)
 		}
 		roundTrip, err := io.ReadAll(&out)

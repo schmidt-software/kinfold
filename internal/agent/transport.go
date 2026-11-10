@@ -591,22 +591,29 @@ func setCertificateDeadline(conn net.Conn, certificates []*x509.Certificate) (ti
 	return deadline, earliest, nil
 }
 
-func WritePacket(w io.Writer, packet []byte) error {
+// framePacket returns a copy of packet behind its 2-byte length prefix, the
+// form in which packets travel between devices.
+func framePacket(packet []byte) ([]byte, error) {
 	if len(packet) == 0 || len(packet) > 65535 {
-		return fmt.Errorf("invalid packet size %d", len(packet))
+		return nil, fmt.Errorf("invalid packet size %d", len(packet))
 	}
-	buf := make([]byte, 2+len(packet))
-	binary.BigEndian.PutUint16(buf, uint16(len(packet)))
-	copy(buf[2:], packet)
-	for len(buf) > 0 {
-		n, err := w.Write(buf)
+	frame := make([]byte, 2+len(packet))
+	binary.BigEndian.PutUint16(frame, uint16(len(packet)))
+	copy(frame[2:], packet)
+	return frame, nil
+}
+
+// writeFrame writes a frame built by framePacket completely.
+func writeFrame(w io.Writer, frame []byte) error {
+	for len(frame) > 0 {
+		n, err := w.Write(frame)
 		if err != nil {
 			return err
 		}
 		if n == 0 {
 			return io.ErrShortWrite
 		}
-		buf = buf[n:]
+		frame = frame[n:]
 	}
 	return nil
 }

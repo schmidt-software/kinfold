@@ -61,7 +61,7 @@ func TestIPv6IncomingSession(t *testing.T) {
 				result <- l.session(context.Background(), left, netip.MustParseAddr("10.77.0.1"), &output, &mu)
 			}()
 			packet := ipv6(tc.src, tc.dst)
-			if err := WritePacket(right, packet); err != nil {
+			if err := writePacket(right, packet); err != nil {
 				t.Fatal(err)
 			}
 			if !tc.rejected {

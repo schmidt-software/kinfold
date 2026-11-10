@@ -61,7 +61,7 @@ func TestSessionWriteFailureDuringConcurrentStop(t *testing.T) {
 			var mu sync.Mutex
 			done := make(chan error, 1)
 			go func() { done <- l.session(ctx, conn, netip.MustParseAddr("10.77.0.1"), device, &mu) }()
-			if err := WritePacket(right, ipv4(2, 1)); err != nil {
+			if err := writePacket(right, ipv4(2, 1)); err != nil {
 				t.Fatal(err)
 			}
 			select {
@@ -73,7 +73,7 @@ func TestSessionWriteFailureDuringConcurrentStop(t *testing.T) {
 				cancel()
 			} else {
 				right.Close()
-				l.queue <- ipv4(1, 2)
+				l.queue <- framed(ipv4(1, 2))
 			}
 			select {
 			case <-conn.closed:

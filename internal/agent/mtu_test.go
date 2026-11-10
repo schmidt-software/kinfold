@@ -73,7 +73,7 @@ func TestPeerAcceptsPacketAtMTU(t *testing.T) {
 	packet := make([]byte, tunnelMTU)
 	copy(packet, ipv4(2, 1))
 	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
-	if err := WritePacket(right, packet); err != nil {
+	if err := writePacket(right, packet); err != nil {
 		t.Fatal(err)
 	}
 	right.Close()
