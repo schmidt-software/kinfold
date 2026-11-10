@@ -433,8 +433,10 @@ func joinWithToken(ctx context.Context, server, fingerprint, id, tokenFile, out 
 	}
 	cert, ca, configKey, err := agent.Join(ctx, server, fingerprint, pending.Token, pending.Request)
 	if err != nil {
-		if strings.Contains(err.Error(), "403") {
-			os.Remove(path) // the controller refused the token; nothing was issued for this key
+		// Only the controller's own refusal means nothing was issued for
+		// this key; any other error may hide a lost response (#122).
+		if errors.Is(err, agent.ErrTokenRefused) {
+			os.Remove(path)
 		}
 		return core.Credential{}, err
 	}
