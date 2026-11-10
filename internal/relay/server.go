@@ -565,8 +565,10 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	id, cert, err := s.enroll(req.Token, req.Request)
 	switch {
 	case errors.Is(err, ErrBusy):
-		s.noteRenewalFailure(source) // unauthenticated callers must not keep the lock busy
-		w.Header().Set("Retry-After", "5")
+		// Unauthenticated callers must not keep the lock busy: the source
+		// is blocked like after a failure, so the header names that time.
+		s.noteRenewalFailure(source)
+		w.Header().Set("Retry-After", "30")
 		s.reject(w, "controller busy; retry later", http.StatusServiceUnavailable)
 		return
 	case errors.Is(err, core.ErrTokenInvalid):
