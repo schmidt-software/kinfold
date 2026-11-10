@@ -11,12 +11,13 @@ mechanics; the reasoning behind each rule is in `docs/DECISION-LOG.md`.
    subject line (≤ 72 chars), body explains *why*. Reference the issue
    (`Refs #12` or `Closes #12`) in the PR, not in every commit.
 4. Before opening the PR: `gofmt -l .`, `go vet ./...`,
-   `go test -race -count=1 ./...`. If the change touches the network path
-   (`internal/agent`, `internal/relay`, the supervisor or the relay protocol),
-   also run `sh scripts/integration-docker.sh` locally and note the result in
-   the PR description.
-5. Open a PR, wait for CI, merge with **rebase** (not squash), delete the
-   branch.
+   `go test -race -count=1 ./...`. CI also runs the Docker integration test
+   (`sh scripts/integration-docker.sh`) on every PR; run it locally first
+   when the change touches the network path (`internal/agent`,
+   `internal/relay`, the supervisor or the relay protocol) and you want the
+   result before pushing.
+5. Open a PR, wait for CI (all five checks), merge with **rebase** (not
+   squash), delete the branch.
 6. Non-trivial decisions made along the way get an entry in
    `docs/DECISION-LOG.md` in the same PR.
 

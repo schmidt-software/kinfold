@@ -1000,3 +1000,25 @@ release does not touch.
 **Consequences:** The changed send path (#131) is verified on Linux by the
 Docker integration test and on macOS only by the unit tests. If macOS
 traffic misbehaves after the update, run `scripts/macos-smoke.sh` first.
+
+## D-044 — 2026-11-10 — active — Docker integration test in CI
+
+**Decision:** CI runs `scripts/integration-docker.sh` as a fifth job on
+every push and pull request (#146). A merge needs all five checks. The
+rule to run the test locally before merging network changes becomes a
+recommendation for fast feedback. The script builds the Linux test binary
+with `CGO_ENABLED=0`.
+
+**Rationale:** The end-to-end test covers what unit tests cannot (real TUN
+devices, relay and direct path, revocation), but it only ran when a
+contributor remembered the rule. GitHub-hosted runners provide Docker with
+`NET_ADMIN` and `/dev/net/tun`; the job takes about 95 seconds. The first
+CI run failed because on a Linux host the binary was linked against glibc
+and could not start in the Alpine-based test image: the test had only
+ever worked when cross-compiled from macOS.
+
+**Consequences:** A broken network path can no longer be merged with green
+CI. The job pulls `alpine/socat:latest` from a public registry, so a
+registry outage or a changed image can fail CI without a code change; pin
+the image by digest if that happens. The macOS tunnel is still outside CI
+(D-029).

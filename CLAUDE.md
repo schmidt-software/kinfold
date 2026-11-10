@@ -17,7 +17,7 @@ Repository language is English (code, comments, docs, CLI output, commits, PRs).
 
 ## Workflow
 
-Issue → branch `<issue>-<slug>` → atomic commits → PR → CI green → rebase merge → delete branch. No direct commits to `main`. Details in `CONTRIBUTING.md`. Run the Docker integration test locally before merging anything that touches `internal/agent`, `internal/relay` or the supervisor; note the result in the PR.
+Issue → branch `<issue>-<slug>` → atomic commits → PR → CI green → rebase merge → delete branch. No direct commits to `main`. Details in `CONTRIBUTING.md`. CI runs the Docker integration test on every PR (D-044); run it locally first for fast feedback when touching `internal/agent`, `internal/relay` or the supervisor.
 
 ## Releases
 
